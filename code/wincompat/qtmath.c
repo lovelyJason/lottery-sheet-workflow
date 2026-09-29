@@ -52,7 +52,7 @@ static short classify_float(float value) {
     return negative ? (short)0x0008 : (short)0x0100;
 }
 
-short __cdecl _dclass(double value) {
+short __cdecl compat_dclass(double value) {
     typedef short (__cdecl *Fn)(double);
     HMODULE module = math_module();
     Fn real = module ? (Fn)GetProcAddress(module, "_dclass") : NULL;
@@ -62,7 +62,7 @@ short __cdecl _dclass(double value) {
     return classify_double(value);
 }
 
-short __cdecl _fdclass(float value) {
+short __cdecl compat_fdclass(float value) {
     typedef short (__cdecl *Fn)(float);
     HMODULE module = math_module();
     Fn real = module ? (Fn)GetProcAddress(module, "_fdclass") : NULL;

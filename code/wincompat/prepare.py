@@ -245,9 +245,10 @@ def emit_thunks(stem: str, modules: list[tuple[str, set]], stubs: dict[str, str]
     for name, target in sorted(stubs.items()):
         if any(name in symbols for _dll, symbols in modules):
             exports.append(f"{name}={target}")
+    math_alias = {"_dclass": "compat_dclass", "_fdclass": "compat_fdclass"}
     for name in sorted(MATH_LOCAL):
         if any(name in symbols for _dll, symbols in modules):
-            exports.append(name)
+            exports.append(f"{name}={math_alias[name]}")
     return exports
 
 
