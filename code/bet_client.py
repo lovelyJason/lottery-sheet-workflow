@@ -9,9 +9,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
-from zoneinfo import ZoneInfo
-
 from auth_storage import APP_DIR, _restrict
+from china_time import CHINA_TIME
 from history_client import BROWSER, SUCCESS_CODES, origin, safe_message
 
 BET_STATE_FILE = APP_DIR / "bet_state.json"
@@ -82,7 +81,7 @@ def zodiac_numbers(zodiac: str, open_time: int) -> set[int]:
     if zodiac not in ZODIACS:
         raise BetError("Excel I1 生肖无效")
     try:
-        day = datetime.fromtimestamp(int(open_time), ZoneInfo("Asia/Shanghai")).date()
+        day = datetime.fromtimestamp(int(open_time), CHINA_TIME).date()
         boundary = datetime.fromisoformat(LUNAR_NEW_YEAR[day.year]).date()
     except (KeyError, OSError, OverflowError, TypeError, ValueError) as exc:
         raise BetError("开奖日期超出当前生肖映射范围，已停止自动投注") from exc

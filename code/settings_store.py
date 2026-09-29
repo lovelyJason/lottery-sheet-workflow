@@ -7,9 +7,8 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import urlparse
-from zoneinfo import ZoneInfo
-
 from auth_storage import APP_DIR, _restrict
+from china_time import CHINA_TIME
 
 SETTINGS_FILE = APP_DIR / "settings.json"
 
@@ -148,7 +147,7 @@ def profit_halt(value, value_day: str, profit_limit, loss_limit) -> tuple[bool, 
 
 
 def site_day() -> str:
-    return datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    return datetime.now(CHINA_TIME).date().isoformat()
 
 
 def normalize_url(raw: str) -> str:

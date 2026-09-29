@@ -6,6 +6,7 @@ from pathlib import Path
 
 import PySide6
 import shiboken6
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 ROOT = Path(SPECPATH)
 
@@ -49,6 +50,9 @@ HEAVY = (
 
 def heavy(path: str) -> bool:
     lowered = path.replace("\\", "/").lower()
+    name = lowered.rsplit("/", 1)[-1]
+    if name.startswith("api-ms-win-"):
+        return True
     return any(token in lowered for token in HEAVY)
 
 
@@ -66,6 +70,25 @@ def qt_dlls() -> list[tuple[str, str]]:
                     continue
                 dest = Path(dirpath).resolve().relative_to(anchor)
                 found.append((source, str(dest)))
+    runtime = (
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "msvcp140.dll",
+        "msvcp140_1.dll",
+        "msvcp140_2.dll",
+        "concrt140.dll",
+        "python3.dll",
+        "python312.dll",
+        "qtcore32.dll",
+        "qtuser.dll",
+        "qtmath.dll",
+        "qtsynch.dll",
+    )
+    pyside = Path(PySide6.__file__).resolve().parent
+    for name in runtime:
+        source = pyside / name
+        if source.exists():
+            found.append((str(source), "."))
     return found
 
 
@@ -73,14 +96,17 @@ a = Analysis(
     ["main.py"],
     pathex=[str(ROOT)],
     binaries=qt_dlls(),
-    datas=[(str(ROOT / "assets"), "assets")],
+    datas=[(str(ROOT / "assets"), "assets"), *collect_data_files("tzdata")],
     hiddenimports=[
         "PySide6.QtCore",
         "PySide6.QtGui",
         "PySide6.QtWidgets",
         "PySide6.QtSvg",
         "shiboken6",
+        "tzdata",
+        *collect_submodules("tzdata"),
     ],
+    runtime_hooks=[str(ROOT / "wincompat" / "rthook.py")],
     noarchive=False,
 )
 a.binaries = [entry for entry in a.binaries if not heavy(entry[0])]

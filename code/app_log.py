@@ -7,12 +7,11 @@ import re
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from auth_storage import APP_DIR, _restrict
+from china_time import CHINA_TIME
 
 LOG_FILE = APP_DIR / "runtime.log"
-CHINA_TIME = ZoneInfo("Asia/Shanghai")
 MAX_MEMORY_LINES = 2000
 MAX_FILE_BYTES = 5 * 1024 * 1024
 _LINE = re.compile(
