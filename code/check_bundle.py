@@ -40,6 +40,9 @@ def main() -> None:
         "pyside6/qtd12.dll",
         "pyside6/qtuser.dll",
         "pyside6/plugins/platforms/qtuser.dll",
+        "pyside6/ucrtbase.dll",
+        "pyside6/api-ms-win-crt-runtime-l1-1-0.dll",
+        "ucrtbase.dll",
     ):
         if token not in names:
             raise SystemExit("missing shim " + token)

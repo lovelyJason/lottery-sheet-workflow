@@ -352,7 +352,23 @@ def main() -> None:
             for filename in companions[name]:
                 shutil.copy2(OUT / filename, destination.parent / filename)
         patched += 1
+    copy_system_runtime()
     print(f"patched {patched} Qt binaries into {TREE}")
+
+
+def copy_system_runtime() -> None:
+    """Ship the Universal CRT beside Qt. A VPS often does not have it installed."""
+    kits = Path(r"C:\Program Files (x86)\Windows Kits\10\Redist\ucrt\DLLs\x64")
+    if not kits.is_dir():
+        found = list(Path(r"C:\Program Files (x86)\Windows Kits\10").glob("Redist/**/ucrt/DLLs/x64"))
+        if not found:
+            raise SystemExit("Universal CRT redistributable was not found")
+        kits = found[0]
+    destinations = [TREE, TREE / "PySide6", TREE / "shiboken6"]
+    for folder in destinations:
+        folder.mkdir(parents=True, exist_ok=True)
+        for source in kits.glob("*.dll"):
+            shutil.copy2(source, folder / source.name)
 
 
 if __name__ == "__main__":
