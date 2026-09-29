@@ -19,11 +19,8 @@ def main() -> None:
         "pyside6/qt6gui.dll",
         "pyside6/qt6widgets.dll",
         "pyside6/qtcore.pyd",
-        "pyside6/qtcore32.dll",
         "pyside6/qtmath.dll",
         "pyside6/qtsynch.dll",
-        "pyside6/qtuser.dll",
-        "pyside6/qtd3d.dll",
         "pyside6/qtd12.dll",
         "pyside6/vcruntime140_1.dll",
         "pyside6/msvcp140.dll",
@@ -43,29 +40,27 @@ def main() -> None:
         raise SystemExit("api-ms dlls were packed: " + ", ".join(banned[:8]))
 
     qt_core = imports(reader, "PySide6\\Qt6Core.dll")
-    for required_import in ("qtcore32.dll", "qtmath.dll", "qtsynch.dll", "qtuser.dll"):
+    for required_import in ("qtmath.dll", "qtsynch.dll", "kernel32.dll", "user32.dll"):
         if required_import not in qt_core:
             raise SystemExit(f"Qt6Core.dll does not import {required_import}: {qt_core}")
-    for forbidden in ("kernel32.dll", "icuuc.dll", "api-ms-win-crt-math-l1-1-0.dll"):
+    for forbidden in ("icuuc.dll", "api-ms-win-crt-math-l1-1-0.dll", "qtcore32.dll", "qtuser.dll"):
         if forbidden in qt_core:
             raise SystemExit(f"Qt6Core.dll still imports {forbidden}")
 
     qt_gui = imports(reader, "PySide6\\Qt6Gui.dll")
-    for required_import in ("qtd3d.dll", "qtd12.dll", "qtdx.dll", "qtdwr.dll", "qtuxt.dll"):
+    for required_import in ("qtd12.dll", "d3d11.dll", "dxgi.dll", "dwrite.dll", "uxtheme.dll"):
         if required_import not in qt_gui:
             raise SystemExit(f"Qt6Gui.dll does not import {required_import}: {qt_gui}")
-    for forbidden in ("d3d11.dll", "d3d12.dll", "dxgi.dll", "dwrite.dll", "uxtheme.dll"):
-        if forbidden in qt_gui:
-            raise SystemExit(f"Qt6Gui.dll still imports {forbidden}")
+    if "d3d12.dll" in qt_gui:
+        raise SystemExit("Qt6Gui.dll still imports d3d12.dll")
 
-    widgets = imports(reader, "PySide6\\Qt6Widgets.dll")
-    for required_import in ("qtdwm.dll", "qtuxt.dll"):
-        if required_import not in widgets:
-            raise SystemExit(f"Qt6Widgets.dll does not import {required_import}: {widgets}")
     windows = imports(reader, "PySide6\\plugins\\platforms\\qwindows.dll")
-    for required_import in ("qtdwm.dll", "qtd9.dll", "qtdpi.dll", "qtuser.dll", "qtcore32.dll", "qtmath.dll"):
+    for required_import in ("user32.dll", "d3d9.dll", "dwmapi.dll", "qt6gui.dll"):
         if required_import not in windows:
             raise SystemExit(f"qwindows.dll does not import {required_import}: {windows}")
+    for forbidden in ("qtuser.dll", "qtcore32.dll", "qtd3d.dll", "qtdwm.dll", "qtdpi.dll"):
+        if forbidden in windows:
+            raise SystemExit(f"qwindows.dll was redirected to {forbidden}")
     print("bundle checks passed")
 
 

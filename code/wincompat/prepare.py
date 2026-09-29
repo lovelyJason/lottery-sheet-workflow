@@ -34,35 +34,15 @@ MATH_LOCAL = {"_dclass", "_fdclass"}
 SYNCH_EXPORTS = ("WaitOnAddress", "WakeByAddressSingle", "WakeByAddressAll")
 
 # Replacement DLL names must fit in the original import string.
+# Only DLLs that are missing on older Windows. user32, kernel32, and d3d11 stay
+# direct imports so the windows platform plugin can create a real window.
 REPLACEMENTS = {
-    "kernel32.dll": "qtcore32.dll",
-    "user32.dll": "qtuser.dll",
     "api-ms-win-crt-math-l1-1-0.dll": "qtmath.dll",
     "api-ms-win-core-synch-l1-2-0.dll": "qtsynch.dll",
-    "d3d11.dll": "qtd3d.dll",
     "d3d12.dll": "qtd12.dll",
-    "dxgi.dll": "qtdx.dll",
-    "d3d9.dll": "qtd9.dll",
-    "dwmapi.dll": "qtdwm.dll",
-    "dwrite.dll": "qtdwr.dll",
-    "uxtheme.dll": "qtuxt.dll",
-    "api-ms-win-shcore-scaling-l1-1-1.dll": "qtdpi.dll",
-    "api-ms-win-core-winrt-l1-1-0.dll": "qtwinrt.dll",
-    "api-ms-win-core-winrt-string-l1-1-0.dll": "qtwstr.dll",
-    "uiautomationcore.dll": "qtui.dll",
 }
 GRAPHICS = {
-    "d3d11.dll",
     "d3d12.dll",
-    "dxgi.dll",
-    "d3d9.dll",
-    "dwmapi.dll",
-    "dwrite.dll",
-    "uxtheme.dll",
-    "api-ms-win-shcore-scaling-l1-1-1.dll",
-    "api-ms-win-core-winrt-l1-1-0.dll",
-    "api-ms-win-core-winrt-string-l1-1-0.dll",
-    "uiautomationcore.dll",
 }
 ZERO_RETURN = {
     "Direct3DCreate9",
@@ -133,6 +113,8 @@ def pe_files() -> list[Path]:
             if path.suffix.lower() not in {".dll", ".pyd"}:
                 continue
             if path.name.lower() in set(REPLACEMENTS.values()):
+                continue
+            if "plugins" in {part.lower() for part in path.parts}:
                 continue
             if heavy(path):
                 continue
@@ -334,14 +316,10 @@ def graphics_sources(symbols_by_dll: dict[str, set]) -> None:
         "d3d9.dll": "d3d9.dll",
         "dwmapi.dll": "dwmapi.dll",
         "dwrite.dll": "dwrite.dll",
-        "uxtheme.dll": "uxtheme.dll",
-        "api-ms-win-shcore-scaling-l1-1-1.dll": "api-ms-win-shcore-scaling-l1-1-1.dll",
-        "api-ms-win-core-winrt-l1-1-0.dll": "api-ms-win-core-winrt-l1-1-0.dll",
-        "api-ms-win-core-winrt-string-l1-1-0.dll": "api-ms-win-core-winrt-string-l1-1-0.dll",
-        "uiautomationcore.dll": "UIAutomationCore.dll",
+        "d3d12.dll": "d3d12.dll",
     }
     for dll, symbols in symbols_by_dll.items():
-        if dll not in loads:
+        if dll not in GRAPHICS:
             continue
         c_lines.append(f'    module = LoadLibraryW(L"{loads[dll]}");')
         for symbol in sorted(symbols, key=lambda item: (isinstance(item, str), item)):
@@ -470,17 +448,11 @@ def main() -> None:
     for key, value in REPLACEMENTS.items():
         if len(value) > len(key):
             raise SystemExit(f"{value} is longer than {key}")
-    for dll in ("kernel32.dll", "user32.dll", "api-ms-win-crt-math-l1-1-0.dll"):
+    for dll in ("api-ms-win-crt-math-l1-1-0.dll",):
         ordinals = sorted(item for item in symbols[dll] if isinstance(item, int))
         if ordinals:
             raise SystemExit(f"{dll} is imported by ordinal: {ordinals}")
 
-    write_def(BUILD / "qtcore32.def", "qtcore32", emit_thunks(
-        "qtcore32", [("KERNEL32.dll", symbols["kernel32.dll"])], KERNEL_STUBS,
-    ))
-    write_def(BUILD / "qtuser.def", "qtuser", emit_thunks(
-        "qtuser", [("USER32.dll", symbols["user32.dll"])], USER_STUBS,
-    ))
     write_def(BUILD / "qtmath.def", "qtmath", emit_thunks(
         "qtmath",
         [("api-ms-win-crt-math-l1-1-0.dll", symbols["api-ms-win-crt-math-l1-1-0.dll"])],
@@ -491,8 +463,6 @@ def main() -> None:
 
     built = {}
     thunks = {
-        "qtcore32": ROOT / "qtcore32.c",
-        "qtuser": ROOT / "qtuser.c",
         "qtmath": ROOT / "qtmath.c",
     }
     for stem, source in thunks.items():
@@ -508,11 +478,7 @@ def main() -> None:
     compile_dll(ROOT / "qtsynch.c", BUILD / "qtsynch.def", synch)
     built["qtsynch.dll"] = synch
     graphics = compile_graphics()
-    for name in (
-        "qtd3d.dll", "qtd12.dll", "qtdx.dll", "qtd9.dll", "qtdwm.dll", "qtdwr.dll",
-        "qtuxt.dll", "qtdpi.dll", "qtwinrt.dll", "qtwstr.dll", "qtui.dll",
-    ):
-        built[name] = graphics
+    built["qtd12.dll"] = graphics
 
     patched = sum(patch_file(path, built) for path in files)
     copy_python_dlls()
