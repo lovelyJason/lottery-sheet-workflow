@@ -20,6 +20,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r code/requirements.txt pyinstaller
 
+      - name: Add the Windows functions a VPS may not have
+        working-directory: code
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSDIR=%%i"
+          call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat"
+          python wincompat\vps_shim.py
+          if errorlevel 1 exit /b 1
+
       - name: Build exe
         working-directory: code
         run: pyinstaller --noconfirm --clean app.spec
