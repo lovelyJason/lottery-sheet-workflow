@@ -1,143 +1,247 @@
 from __future__ import annotations
 
-import json
 import sys
-from datetime import datetime, timezone
-from typing import Any
-
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QDialogButtonBox, QLabel, QLineEdit, QMainWindow,
-    QMessageBox, QPushButton, QPlainTextEdit, QVBoxLayout, QWidget,
+    QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget,
 )
 
-from auth_storage import clear, load, save, validate_payload
+import app_log
+from alerts import SystemAlerter
+from app_icon import apply_app_icon, build_qicon, set_windows_app_user_model_id
+from auth_storage import load
+from config_dialogs import BetDialog, RunDialog
+from debug_tools import DebugDialog, development_mode
+from login_dialog import LoginDialog
+from result_dialogs import HistoryDialog, LogDialog
+from profit_worker import ProfitWorker
+from settings_store import load_settings, save_profit_snapshot, site_day
+from sheet_panel import SheetPanel
+from theme import APP_STYLESHEET, CONFIG_BG
+from ui_common import enable_terminal_interrupt, hug, set_unread
 
-
-def mask(value: str) -> str:
-    if len(value) <= 12:
-        return "*" * len(value)
-    return value[:6] + "…" + value[-6:]
-
-
-def jwt_exp(token: str) -> str:
-    try:
-        raw = token.removeprefix("Bearer ").split(".")[1]
-        pad = "=" * (-len(raw) % 4)
-        import base64
-        claims = json.loads(base64.urlsafe_b64decode(raw + pad))
-        exp = claims.get("exp")
-        if isinstance(exp, (int, float)):
-            return datetime.fromtimestamp(exp, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    except (ValueError, IndexError, KeyError, TypeError, json.JSONDecodeError):
-        pass
-    return "未解析"
-
-
-class ImportDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("导入单账号登录态")
-        self.resize(620, 390)
-        root = QVBoxLayout(self)
-        tip = QLabel("粘贴完整的 Local Storage → user JSON，或包含 token、refreshToken、uuid 的 JSON。\n登录态仅保存到本机，不会上传；不要粘贴密码。")
-        tip.setWordWrap(True)
-        root.addWidget(tip)
-        self.editor = QPlainTextEdit()
-        self.editor.setPlaceholderText('{"token":"Bearer ...","refreshToken":"...","uuid":"..."}')
-        self.editor.setLineWrapMode(QPlainTextEdit.NoWrap)
-        root.addWidget(self.editor)
-        self.error = QLabel("")
-        self.error.setStyleSheet("color:#b42318;")
-        root.addWidget(self.error)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self._accept)
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
-        self.payload: dict[str, Any] | None = None
-
-    def _accept(self) -> None:
-        try:
-            self.payload = validate_payload(self.editor.toPlainText())
-        except ValueError as exc:
-            self.error.setText(str(exc))
-            return
-        self.accept()
-
-
-class GuideDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("如何获取登录态")
-        self.resize(620, 420)
-        root = QVBoxLayout(self)
-        text = QLabel("""<b>Chrome 获取步骤</b><br>
-1. 在 Chrome 打开目标网站并确认已经登录。<br>
-2. 按 F12，打开 <b>Application</b>（应用）面板。<br>
-3. 左侧进入 <b>Storage → Local Storage</b>，选择目标网站域名。<br>
-4. 找到键名 <b>user</b>，复制右侧 Value 的完整 JSON。<br>
-5. 回到本程序点击“导入登录态”，粘贴并确认。<br><br>
-<b>注意</b><br>
-不要复制密码，不要把 token 发到聊天或截图中。登录态失效后重新复制 user 值导入即可。<br>
-当前网站主要使用 Local Storage，不是 Cookie。""")
-        text.setWordWrap(True)
-        text.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        root.addWidget(text)
-        close = QPushButton("关闭")
-        close.clicked.connect(self.accept)
-        root.addWidget(close, alignment=Qt.AlignRight)
+APP_TITLE = "黄金万两 v1.0.0"
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("开奖数据工作台")
-        self.resize(700, 430)
-        root = QVBoxLayout()
-        title = QLabel("单账号登录态")
-        title.setStyleSheet("font-size:20px;font-weight:600;")
-        root.addWidget(title)
-        self.status = QLabel()
-        self.status.setWordWrap(True)
-        root.addWidget(self.status)
-        self.detail = QLineEdit()
-        self.detail.setReadOnly(True)
-        root.addWidget(self.detail)
-        import_btn = QPushButton("导入登录态")
-        import_btn.clicked.connect(self.import_auth)
-        root.addWidget(import_btn)
-        guide_btn = QPushButton("如何获取登录态")
-        guide_btn.clicked.connect(lambda: GuideDialog(self).exec())
-        root.addWidget(guide_btn)
-        clear_btn = QPushButton("清除本机登录态")
-        clear_btn.clicked.connect(self.clear_auth)
-        root.addWidget(clear_btn)
-        root.addStretch()
-        box = QWidget(); box.setLayout(root); self.setCentralWidget(box)
-        self.refresh()
+        self.debug_button = None
+        self.setWindowTitle(APP_TITLE)
+        self.setMinimumSize(680, 640)
+        self.setWindowIcon(build_qicon())
+        canvas = QWidget()
+        canvas.setObjectName("canvas")
+        canvas.setAttribute(Qt.WA_StyledBackground, True)
+        canvas.setStyleSheet(f"QWidget#canvas {{ background: {CONFIG_BG}; }}")
+        root = QVBoxLayout(canvas)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(14)
+        self.sheet_panel = SheetPanel(self)
+        self.history_panel = self.sheet_panel.history_panel
+        self.alerter = SystemAlerter(self)
+        self.history_panel.alert_requested.connect(self.alerter.alert)
+        self.profit_worker = None
+        root.addWidget(self.sheet_panel, 1)
+        self.login_dialog = LoginDialog(self)
+        self.login_dialog.changed.connect(self.refresh_login_badge)
+        root.addWidget(self._build_entries())
+        self._closing = False
+        self.history_panel.idle.connect(self._close_when_idle)
+        self.history_panel.state_changed.connect(self._sync_controls)
+        self.setCentralWidget(canvas)
+        self.refresh_login_badge()
+        self.refresh_bet_badge()
+        self.refresh_run_badge()
+        self.resize(720, 640)
+        if development_mode():
+            self._create_debug_button()
 
-    def refresh(self) -> None:
-        payload = load()
-        if not payload:
-            self.status.setText("状态：未导入登录态")
-            self.detail.clear()
+    def _create_debug_button(self) -> None:
+        self.debug_button = QPushButton("调试", self)
+        self.debug_button.setObjectName("floatingDebugButton")
+        self.debug_button.setToolTip("开发模式：打开运行功能调试工具")
+        self.debug_button.setFixedSize(62, 38)
+        self.debug_button.setStyleSheet(
+            "QPushButton#floatingDebugButton {"
+            "background:#E74C3C;color:white;border:none;border-radius:19px;"
+            "font-weight:700;padding:0 10px;}"
+            "QPushButton#floatingDebugButton:hover {background:#C0392B;}"
+        )
+        self.debug_button.clicked.connect(self.open_debug_dialog)
+        self.debug_button.raise_()
+        self._position_debug_button()
+
+    def _position_debug_button(self) -> None:
+        if self.debug_button is not None:
+            margin = 18
+            self.debug_button.move(
+                self.width() - self.debug_button.width() - margin,
+                self.height() - self.debug_button.height() - 66,
+            )
+            self.debug_button.raise_()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._position_debug_button()
+
+    def open_debug_dialog(self) -> None:
+        DebugDialog(self.alerter, self).exec()
+
+    def _build_entries(self) -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(8)
+        self.bet_btn = hug(QPushButton("投注参数"))
+        self.bet_btn.clicked.connect(self.open_bet_dialog)
+        self.login_btn = hug(QPushButton("登录管理"))
+        self.login_btn.clicked.connect(self.open_login_dialog)
+        self.run_btn = hug(QPushButton("运行配置"))
+        self.run_btn.clicked.connect(self.open_run_dialog)
+        history = hug(QPushButton("查看历史结果"))
+        history.clicked.connect(self.open_history)
+        logs = hug(QPushButton("查看日志"))
+        logs.clicked.connect(lambda: LogDialog(self).exec())
+        self.profit_label = QLabel("今日盈亏：—")
+        self.profit_label.setObjectName("hint")
+        self.profit_refresh = hug(QPushButton("刷新盈亏"))
+        self.profit_refresh.clicked.connect(self.refresh_profit)
+        layout.addWidget(self.login_btn)
+        layout.addWidget(self.bet_btn)
+        layout.addWidget(self.run_btn)
+        layout.addWidget(history)
+        layout.addWidget(logs)
+        layout.addStretch(1)
+        layout.addWidget(self.profit_label)
+        layout.addWidget(self.profit_refresh)
+        return row
+
+    def _sync_controls(self, active: bool) -> None:
+        self.login_dialog.set_active(active)
+        self.bet_btn.setEnabled(not active)
+        self.run_btn.setEnabled(not active)
+        self.profit_refresh.setEnabled(self.profit_worker is None)
+
+    def open_login_dialog(self) -> None:
+        self.login_dialog.set_active(self.history_panel.busy or self.history_panel.running)
+        self.login_dialog.exec()
+        self.refresh_login_badge()
+
+    def open_history(self) -> None:
+        dialog = HistoryDialog(self)
+        dialog.alert_requested.connect(self.alerter.alert)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
+    def closeEvent(self, event) -> None:
+        if self.history_panel.busy or (self.profit_worker and self.profit_worker.isRunning()):
+            self._closing = True
+            self.history_panel.stop_polling()
+            event.ignore()
             return
-        self.status.setText("状态：已导入单个账号登录态")
-        self.detail.setText(f"token: {mask(payload['token'])}    refreshToken: {mask(payload['refreshToken'])}    uuid: {mask(payload['uuid'])}    token 过期时间: {jwt_exp(payload['token'])}")
+        self.history_panel.running = False
+        self.history_panel.timer.stop()
+        self.login_dialog.reject()
+        super().closeEvent(event)
 
-    def import_auth(self) -> None:
-        dialog = ImportDialog(self)
-        if dialog.exec() == QDialog.Accepted and dialog.payload:
-            save(dialog.payload)
-            self.refresh()
-            QMessageBox.information(self, "导入成功", "登录态已保存到本机。")
+    def _close_when_idle(self) -> None:
+        if self._closing and not self.history_panel.busy and not (
+                self.profit_worker and self.profit_worker.isRunning()):
+            self.close()
 
-    def clear_auth(self) -> None:
-        if QMessageBox.question(self, "确认清除", "确定删除本机保存的登录态吗？") == QMessageBox.Yes:
-            clear(); self.refresh()
+    def refresh_profit(self) -> None:
+        if self.profit_worker is not None:
+            return
+        settings, auth = load_settings(), load()
+        if not auth:
+            self._profit_failed("请先在“登录管理”导入单账号登录态")
+            return
+        if not settings.url:
+            self._profit_failed("请先在“登录管理”保存网页地址")
+            return
+        self.profit_label.setText("今日盈亏：查询中…")
+        self.profit_refresh.setEnabled(False)
+        self.profit_worker = ProfitWorker(settings.url, auth, self)
+        self.profit_worker.succeeded.connect(self._profit_succeeded)
+        self.profit_worker.failed.connect(self._profit_failed)
+        self.profit_worker.finished.connect(self._profit_finished)
+        self.profit_worker.start()
+
+    def _profit_succeeded(self, value: float) -> None:
+        try:
+            halted, reason = save_profit_snapshot(value)
+        except (OSError, ValueError) as exc:
+            self._profit_failed(str(exc))
+            return
+        shown = f"{value:g}"
+        self.profit_label.setText(f"今日盈亏：{shown}" + ("（已停投）" if halted else ""))
+        app_log.info(f"今日盈亏已刷新：{shown}")
+        if halted:
+            app_log.warn(reason + "，今日自动投注已停止")
+            self.alerter.alert("盈亏停止投注", reason)
+
+    def _profit_failed(self, reason: str) -> None:
+        self.profit_label.setText("今日盈亏：查询失败")
+        app_log.error(reason)
+        self.alerter.alert("盈亏查询失败", reason)
+
+    def _profit_finished(self) -> None:
+        worker, self.profit_worker = self.profit_worker, None
+        if worker is not None:
+            worker.deleteLater()
+        self.profit_refresh.setEnabled(True)
+        if self._closing:
+            self._close_when_idle()
+
+    def refresh_login_badge(self) -> None:
+        set_unread(self.login_btn, load() is None)
+
+    def refresh_bet_badge(self) -> None:
+        settings = load_settings()
+        ready = (settings.bet_count is not None
+                 and len(settings.bet_points_schedule) == settings.bet_count)
+        set_unread(self.bet_btn, not ready)
+        if settings.profit_date == site_day() and settings.today_profit is not None:
+            suffix = "（已停投）" if settings.profit_halt_date == site_day() else ""
+            self.profit_label.setText(f"今日盈亏：{settings.today_profit:g}{suffix}")
+
+    def refresh_run_badge(self) -> None:
+        ready = load_settings().poll_interval is not None
+        set_unread(self.run_btn, not ready)
+
+    def open_run_dialog(self) -> None:
+        RunDialog(self).exec()
+        self.refresh_run_badge()
+        self.history_panel._controls()
+
+    def open_bet_dialog(self) -> None:
+        BetDialog(self).exec()
+        self.refresh_bet_badge()
+
+
+def main() -> int:
+    set_windows_app_user_model_id()
+    app = QApplication(sys.argv)
+    app.setApplicationName("黄金万两")
+    app.setApplicationVersion("1.0.0")
+    app.setApplicationDisplayName(APP_TITLE)
+    enable_terminal_interrupt()
+    app.setStyle("Fusion")
+    app.setStyleSheet(APP_STYLESHEET)
+    font = QFont()
+    font.setFamilies(["PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Segoe UI"])
+    font.setPointSize(13)
+    app.setFont(font)
+    apply_app_icon(app)
+    window = MainWindow()
+    window.show()
+    apply_app_icon(app)
+    return app.exec()
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = MainWindow(); window.show()
-    sys.exit(app.exec())
+    sys.exit(main())
