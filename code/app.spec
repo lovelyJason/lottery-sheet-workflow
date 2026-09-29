@@ -109,8 +109,31 @@ a = Analysis(
     runtime_hooks=[str(ROOT / "wincompat" / "rthook.py")],
     noarchive=False,
 )
-a.binaries = [entry for entry in a.binaries if not heavy(entry[0])]
+PATCHED = ROOT / "build" / "wincompat" / "tree"
+
+
+def retarget(entry):
+    dest = str(entry[0]).replace("\\", "/")
+    patched = PATCHED / dest
+    if patched.is_file():
+        return (entry[0], str(patched), *entry[2:])
+    return entry
+
+
+a.binaries = [retarget(entry) for entry in a.binaries if not heavy(entry[0])]
 a.datas = [entry for entry in a.datas if not heavy(entry[0])]
+if PATCHED.is_dir():
+    present = {str(entry[0]).replace("\\", "/").lower() for entry in a.binaries}
+    typecode = next((entry[2] for entry in a.binaries if len(entry) > 2), "BINARY")
+    sep = "\\" if any("\\" in str(entry[0]) for entry in a.binaries) else "/"
+    for path in PATCHED.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in {".dll", ".pyd"}:
+            continue
+        rel = path.relative_to(PATCHED).as_posix()
+        if rel.lower() in present or heavy(rel):
+            continue
+        a.binaries.append((rel.replace("/", sep), str(path), typecode))
+        present.add(rel.lower())
 
 pyz = PYZ(a.pure)
 exe = EXE(

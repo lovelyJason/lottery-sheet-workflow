@@ -16,6 +16,7 @@ import pefile
 
 ROOT = Path(__file__).resolve().parent
 BUILD = ROOT.parent / "build" / "wincompat"
+TREE = BUILD / "tree"
 
 KERNEL_STUBS = {
     "SetThreadDescription": "Stub_SetThreadDescription",
@@ -396,7 +397,20 @@ def compile_graphics() -> Path:
     return output
 
 
-def patch_file(path: Path) -> set[str]:
+def mirror(path: Path) -> Path:
+    resolved = path.resolve()
+    for package in packages():
+        try:
+            relative = resolved.relative_to(package.parent)
+        except ValueError:
+            continue
+        destination = TREE / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        return destination
+    raise SystemExit(f"outside the Qt packages: {path}")
+
+
+def patch_file(path: Path, built: dict[str, Path]) -> bool:
     blob = bytearray(path.read_bytes())
     pe = pefile.PE(data=bytes(blob), fast_load=True)
     pe.parse_data_directories(
@@ -404,7 +418,7 @@ def patch_file(path: Path) -> set[str]:
     )
     if not hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
         pe.close()
-        return set()
+        return False
     replaced = set()
     for entry in pe.DIRECTORY_ENTRY_IMPORT:
         original = entry.dll.decode()
@@ -424,12 +438,15 @@ def patch_file(path: Path) -> set[str]:
         replaced.add(target)
     pe.close()
     if not replaced:
-        return set()
+        return False
     e_lfanew = int.from_bytes(blob[0x3C:0x40], "little")
     checksum_at = e_lfanew + 24 + 64
     blob[checksum_at:checksum_at + 4] = b"\x00\x00\x00\x00"
-    path.write_bytes(blob)
-    return replaced
+    destination = mirror(path)
+    destination.write_bytes(blob)
+    for name in replaced:
+        shutil.copy2(built[name], destination.parent / name)
+    return True
 
 
 def copy_python_dlls() -> None:
@@ -438,7 +455,9 @@ def copy_python_dlls() -> None:
         source = next((folder / name for folder in candidates if (folder / name).exists()), None)
         if source is None:
             raise SystemExit(f"missing {name} next to Python")
-        for folder in packages():
+        for package in packages():
+            folder = TREE / package.name
+            folder.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, folder / name)
 
 
@@ -495,16 +514,9 @@ def main() -> None:
     ):
         built[name] = graphics
 
-    patched_dirs: set[Path] = set()
-    for path in files:
-        replaced = patch_file(path)
-        if not replaced:
-            continue
-        patched_dirs.add(path.parent)
-        for name in replaced:
-            shutil.copy2(built[name], path.parent / name)
+    patched = sum(patch_file(path, built) for path in files)
     copy_python_dlls()
-    print(f"patched {len(patched_dirs)} directories")
+    print(f"patched {patched} files into {TREE}")
 
 
 if __name__ == "__main__":
