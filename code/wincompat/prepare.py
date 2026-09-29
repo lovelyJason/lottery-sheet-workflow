@@ -194,7 +194,7 @@ def emit_thunks(stem: str, modules: list[tuple[str, set]], stubs: dict[str, str]
     asm.append(".code")
     for name in names:
         asm.extend([
-            f"{name} PROC",
+            f"proxy_{name} PROC",
             "    push rcx",
             "    push rdx",
             "    push r8",
@@ -208,12 +208,12 @@ def emit_thunks(stem: str, modules: list[tuple[str, set]], stubs: dict[str, str]
             "    pop rcx",
             f"    mov rax, QWORD PTR [real_{name}]",
             "    test rax, rax",
-            "    jz fail_" + name,
+            f"    jz fail_{name}",
             "    jmp rax",
             f"fail_{name}:",
             "    xor eax, eax",
             "    ret",
-            f"{name} ENDP",
+            f"proxy_{name} ENDP",
         ])
     asm.append("END")
     (BUILD / f"{stem}.asm").write_text("\n".join(asm) + "\n", encoding="ascii")
@@ -241,7 +241,7 @@ def emit_thunks(stem: str, modules: list[tuple[str, set]], stubs: dict[str, str]
         "",
     ])
     (BUILD / f"{stem}_load.c").write_text("\n".join(c_lines), encoding="ascii")
-    exports = list(names)
+    exports = [f"{name}=proxy_{name}" for name in names]
     for name, target in sorted(stubs.items()):
         if any(name in symbols for _dll, symbols in modules):
             exports.append(f"{name}={target}")
@@ -282,7 +282,7 @@ def graphics_sources(symbols_by_dll: dict[str, set]) -> None:
     def proc(label: str, pointer: str, zero: bool) -> None:
         fail = "xor eax, eax" if zero else "mov eax, 80004005h"
         asm.extend([
-            f"{label} PROC",
+            f"proxy_{label} PROC",
             "    push rcx",
             "    push rdx",
             "    push r8",
@@ -296,12 +296,12 @@ def graphics_sources(symbols_by_dll: dict[str, set]) -> None:
             "    pop rcx",
             f"    mov rax, QWORD PTR [{pointer}]",
             "    test rax, rax",
-            "    jz fail_" + label,
+            f"    jz fail_{label}",
             "    jmp rax",
             f"fail_{label}:",
             f"    {fail}",
             "    ret",
-            f"{label} ENDP",
+            f"proxy_{label} ENDP",
         ])
 
     for name in names:
@@ -363,9 +363,9 @@ def graphics_sources(symbols_by_dll: dict[str, set]) -> None:
         "",
     ])
     (BUILD / "qtgfx.c").write_text("\n".join(c_lines), encoding="ascii")
-    exports = list(names)
+    exports = [f"{name}=proxy_{name}" for name in names]
     for ordinal in ordinals:
-        exports.append(f"ord_{ordinal} @{ordinal} NONAME")
+        exports.append(f"proxy_ord_{ordinal} @{ordinal} NONAME")
     write_def(BUILD / "qtgfx.def", "qtgfx", exports)
 
 
