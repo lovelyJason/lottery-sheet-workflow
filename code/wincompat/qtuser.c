@@ -26,6 +26,29 @@ int WINAPI Stub_GetSystemMetricsForDpi(int index, UINT dpi) {
     return metrics ? metrics(index) : 0;
 }
 
+UINT WINAPI Stub_GetDpiForWindow(HWND hwnd) {
+    typedef UINT (WINAPI *Fn)(HWND);
+    HMODULE user = GetModuleHandleW(L"USER32.dll");
+    Fn real = user ? (Fn)GetProcAddress(user, "GetDpiForWindow") : NULL;
+    if (real) {
+        return real(hwnd);
+    }
+    return 96;
+}
+
+BOOL WINAPI Stub_AdjustWindowRectExForDpi(RECT *rect, DWORD style, BOOL menu,
+                                          DWORD extra, UINT dpi) {
+    typedef BOOL (WINAPI *Fn)(RECT *, DWORD, BOOL, DWORD, UINT);
+    typedef BOOL (WINAPI *OldFn)(RECT *, DWORD, BOOL, DWORD);
+    HMODULE user = GetModuleHandleW(L"USER32.dll");
+    Fn real = user ? (Fn)GetProcAddress(user, "AdjustWindowRectExForDpi") : NULL;
+    if (real) {
+        return real(rect, style, menu, extra, dpi);
+    }
+    OldFn older = user ? (OldFn)GetProcAddress(user, "AdjustWindowRectEx") : NULL;
+    return older ? older(rect, style, menu, extra) : FALSE;
+}
+
 BOOL WINAPI Stub_SystemParametersInfoForDpi(UINT action, UINT param, PVOID data,
                                             UINT winini, UINT dpi) {
     typedef BOOL (WINAPI *Fn)(UINT, UINT, PVOID, UINT, UINT);

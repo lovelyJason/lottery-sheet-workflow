@@ -26,6 +26,8 @@ USER_STUBS = {
     "SetCoalescableTimer": "Stub_SetCoalescableTimer",
     "GetSystemMetricsForDpi": "Stub_GetSystemMetricsForDpi",
     "SystemParametersInfoForDpi": "Stub_SystemParametersInfoForDpi",
+    "GetDpiForWindow": "Stub_GetDpiForWindow",
+    "AdjustWindowRectExForDpi": "Stub_AdjustWindowRectExForDpi",
 }
 MATH_LOCAL = {"_dclass", "_fdclass"}
 SYNCH_EXPORTS = ("WaitOnAddress", "WakeByAddressSingle", "WakeByAddressAll")
@@ -178,30 +180,75 @@ def write_def(path: Path, library: str, lines: list[str]) -> None:
     )
 
 
-def kernel_lines(symbols: set) -> list[str]:
-    lines = []
-    for name in sorted(item for item in symbols if isinstance(item, str)):
-        stub = KERNEL_STUBS.get(name)
-        lines.append(f"{name}={stub}" if stub else f"{name}=KERNEL32.{name}")
-    return lines
+def emit_thunks(stem: str, modules: list[tuple[str, set]], stubs: dict[str, str]) -> list[str]:
+    """Build asm jumps for symbols the system DLL may not export."""
+    names = []
+    for _dll, symbols in modules:
+        for symbol in symbols:
+            if isinstance(symbol, str) and symbol not in stubs and symbol not in MATH_LOCAL:
+                names.append(symbol)
+    names = sorted(set(names))
+    asm = ["OPTION CASEMAP:NONE", "EXTERN ensure_loaded:PROC"]
+    for name in names:
+        asm.append(f"EXTERN real_{name}:QWORD")
+    asm.append(".code")
+    for name in names:
+        asm.extend([
+            f"{name} PROC",
+            "    push rcx",
+            "    push rdx",
+            "    push r8",
+            "    push r9",
+            "    sub rsp, 28h",
+            "    call ensure_loaded",
+            "    add rsp, 28h",
+            "    pop r9",
+            "    pop r8",
+            "    pop rdx",
+            "    pop rcx",
+            f"    mov rax, QWORD PTR [real_{name}]",
+            "    test rax, rax",
+            "    jz fail_" + name,
+            "    jmp rax",
+            f"fail_{name}:",
+            "    xor eax, eax",
+            "    ret",
+            f"{name} ENDP",
+        ])
+    asm.append("END")
+    (BUILD / f"{stem}.asm").write_text("\n".join(asm) + "\n", encoding="ascii")
 
-
-def user_lines(symbols: set) -> list[str]:
-    lines = []
-    for name in sorted(item for item in symbols if isinstance(item, str)):
-        stub = USER_STUBS.get(name)
-        lines.append(f"{name}={stub}" if stub else f"{name}=USER32.{name}")
-    return lines
-
-
-def math_lines(symbols: set) -> list[str]:
-    lines = []
-    for name in sorted(item for item in symbols if isinstance(item, str)):
-        if name in MATH_LOCAL:
-            lines.append(name)
-        else:
-            lines.append(f"{name}=api-ms-win-crt-math-l1-1-0.{name}")
-    return lines
+    c_lines = ["#define WIN32_LEAN_AND_MEAN", "#include <windows.h>", ""]
+    for name in names:
+        c_lines.append(f"FARPROC real_{name};")
+    c_lines.extend(["", "static volatile LONG load_state;", "", "static void load_all(void) {"])
+    for dll, symbols in modules:
+        exported = [item for item in symbols if isinstance(item, str) and item not in stubs and item not in MATH_LOCAL]
+        if not exported:
+            continue
+        c_lines.append(f'    HMODULE module = LoadLibraryW(L"{dll}");')
+        for name in sorted(set(exported)):
+            c_lines.append(f'    real_{name} = module ? GetProcAddress(module, "{name}") : NULL;')
+    c_lines.extend([
+        "}",
+        "",
+        "void ensure_loaded(void) {",
+        "    LONG previous = InterlockedCompareExchange(&load_state, 2, 0);",
+        "    if (previous == 1 || previous == 2) return;",
+        "    load_all();",
+        "    InterlockedExchange(&load_state, 1);",
+        "}",
+        "",
+    ])
+    (BUILD / f"{stem}_load.c").write_text("\n".join(c_lines), encoding="ascii")
+    exports = list(names)
+    for name, target in sorted(stubs.items()):
+        if any(name in symbols for _dll, symbols in modules):
+            exports.append(f"{name}={target}")
+    for name in sorted(MATH_LOCAL):
+        if any(name in symbols for _dll, symbols in modules):
+            exports.append(name)
+    return exports
 
 
 def graphics_sources(symbols_by_dll: dict[str, set]) -> None:
@@ -408,28 +455,38 @@ def main() -> None:
         if ordinals:
             raise SystemExit(f"{dll} is imported by ordinal: {ordinals}")
 
-    write_def(BUILD / "qtcore32.def", "qtcore32", kernel_lines(symbols["kernel32.dll"]))
-    write_def(BUILD / "qtuser.def", "qtuser", user_lines(symbols["user32.dll"]))
-    write_def(BUILD / "qtmath.def", "qtmath", math_lines(symbols["api-ms-win-crt-math-l1-1-0.dll"]))
+    write_def(BUILD / "qtcore32.def", "qtcore32", emit_thunks(
+        "qtcore32", [("KERNEL32.dll", symbols["kernel32.dll"])], KERNEL_STUBS,
+    ))
+    write_def(BUILD / "qtuser.def", "qtuser", emit_thunks(
+        "qtuser", [("USER32.dll", symbols["user32.dll"])], USER_STUBS,
+    ))
+    write_def(BUILD / "qtmath.def", "qtmath", emit_thunks(
+        "qtmath",
+        [("api-ms-win-crt-math-l1-1-0.dll", symbols["api-ms-win-crt-math-l1-1-0.dll"])],
+        {},
+    ))
     write_def(BUILD / "qtsynch.def", "qtsynch", list(SYNCH_EXPORTS))
     graphics_sources(symbols)
 
-    built = {
-        "qtcore32.dll": None,
-        "qtuser.dll": None,
-        "qtmath.dll": None,
-        "qtsynch.dll": None,
+    built = {}
+    thunks = {
+        "qtcore32": ROOT / "qtcore32.c",
+        "qtuser": ROOT / "qtuser.c",
+        "qtmath": ROOT / "qtmath.c",
     }
-    mapping = {
-        "qtcore32.dll": ROOT / "qtcore32.c",
-        "qtuser.dll": ROOT / "qtuser.c",
-        "qtmath.dll": ROOT / "qtmath.c",
-        "qtsynch.dll": ROOT / "qtsynch.c",
-    }
-    for name, source in mapping.items():
-        output = BUILD / name
-        compile_dll(source, BUILD / f"{Path(name).stem}.def", output)
-        built[name] = output
+    for stem, source in thunks.items():
+        asm_obj = BUILD / f"{stem}_asm.obj"
+        subprocess.check_call(
+            ["ml64.exe", "/nologo", "/c", f"/Fo{asm_obj}", str(BUILD / f"{stem}.asm")],
+            cwd=BUILD,
+        )
+        output = BUILD / f"{stem}.dll"
+        compile_dll(BUILD / f"{stem}_load.c", BUILD / f"{stem}.def", output, [asm_obj, source])
+        built[f"{stem}.dll"] = output
+    synch = BUILD / "qtsynch.dll"
+    compile_dll(ROOT / "qtsynch.c", BUILD / "qtsynch.def", synch)
+    built["qtsynch.dll"] = synch
     graphics = compile_graphics()
     for name in (
         "qtd3d.dll", "qtd12.dll", "qtdx.dll", "qtd9.dll", "qtdwm.dll", "qtdwr.dll",
