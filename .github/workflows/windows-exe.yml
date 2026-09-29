@@ -22,48 +22,11 @@ jobs:
 
       - name: Build exe
         working-directory: code
-        run: >
-          pyinstaller --noconfirm --clean --windowed --onefile
-          --name "黄金万两"
-          --icon assets/app-icon.ico
-          --add-data "assets;assets"
-          --paths .
-          --exclude-module PySide6.QtWebEngine
-          --exclude-module PySide6.QtWebEngineCore
-          --exclude-module PySide6.QtWebEngineWidgets
-          --exclude-module PySide6.QtWebEngineQuick
-          --exclude-module PySide6.QtWebChannel
-          --exclude-module PySide6.QtWebSockets
-          --exclude-module PySide6.QtMultimedia
-          --exclude-module PySide6.QtMultimediaWidgets
-          --exclude-module PySide6.Qt3DAnimation
-          --exclude-module PySide6.Qt3DCore
-          --exclude-module PySide6.Qt3DExtras
-          --exclude-module PySide6.Qt3DInput
-          --exclude-module PySide6.Qt3DLogic
-          --exclude-module PySide6.Qt3DRender
-          --exclude-module PySide6.QtCharts
-          --exclude-module PySide6.QtDataVisualization
-          --exclude-module PySide6.QtQuick
-          --exclude-module PySide6.QtQuick3D
-          --exclude-module PySide6.QtQuickWidgets
-          --exclude-module PySide6.QtQml
-          --exclude-module PySide6.QtPdf
-          --exclude-module PySide6.QtPdfWidgets
-          --exclude-module PySide6.QtBluetooth
-          --exclude-module PySide6.QtPositioning
-          --exclude-module PySide6.QtSensors
-          --exclude-module PySide6.QtSerialPort
-          --exclude-module PySide6.QtNfc
-          --exclude-module PySide6.QtRemoteObjects
-          --exclude-module PySide6.QtScxml
-          --exclude-module PySide6.QtSpatialAudio
-          --exclude-module PySide6.QtTextToSpeech
-          --exclude-module PySide6.QtVirtualKeyboard
-          --exclude-module PySide6.QtGraphs
-          --exclude-module PySide6.QtLocation
-          --exclude-module PySide6.QtDesigner
-          main.py
+        run: pyinstaller --noconfirm --clean app.spec
+
+      - name: Check required Qt libraries are packed
+        working-directory: code
+        run: python -c "from PyInstaller.archive.readers import CArchiveReader; names=[n.replace(chr(92),'/').lower() for n in CArchiveReader('dist/黄金万两.exe').toc]; required=('qt6core','qt6gui','qt6widgets','vcruntime140','qwindows'); missing=[t for t in required if not any(t in n for n in names)]; assert not missing, missing; assert not any('webengine' in n for n in names); print('dlls', sum(n.endswith('.dll') for n in names))"
 
       - uses: actions/upload-artifact@v4
         with:
