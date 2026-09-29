@@ -26,7 +26,7 @@ jobs:
 
       - name: Check required Qt libraries are packed
         working-directory: code
-        run: python -c "from PyInstaller.archive.readers import CArchiveReader; names=[n.replace(chr(92),'/').lower() for n in CArchiveReader('dist/黄金万两.exe').toc]; required=('qt6core','qt6gui','qt6widgets','vcruntime140','qwindows'); missing=[t for t in required if not any(t in n for n in names)]; assert not missing, missing; assert not any('webengine' in n for n in names); print('dlls', sum(n.endswith('.dll') for n in names))"
+        run: python check_bundle.py
 
       - uses: actions/upload-artifact@v4
         with:
