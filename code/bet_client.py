@@ -226,18 +226,20 @@ class BetClient:
         return {"game_id": game_id, "bet_info": bets, "odds_change": 0, "bet_type": "bet"}
 
     def today_profit(self) -> float:
-        """Authoritative value rendered by the site's “今日结果” label."""
-        body = self._api("/api/v1/member/getUserInfo")
+        """Return the same live value rendered by the site's “今日结果” label."""
+        game_id = self.game_id()
+        body = self._api(f"/api/v1/member/issueData/{game_id}")
         data = body.get("data")
-        value = data.get("totalWin") if isinstance(data, dict) else None
+        nxt = data.get("next") if isinstance(data, dict) else None
+        value = nxt.get("totalWin") if isinstance(nxt, dict) else None
         if isinstance(value, bool):
-            raise BetError("getUserInfo 缺少有效的今日盈亏 totalWin")
+            raise BetError("issueData 缺少有效的今日盈亏 totalWin")
         try:
             result = float(value)
         except (TypeError, ValueError):
-            raise BetError("getUserInfo 缺少有效的今日盈亏 totalWin") from None
+            raise BetError("issueData 缺少有效的今日盈亏 totalWin") from None
         if result != result or result in (float("inf"), float("-inf")):
-            raise BetError("getUserInfo 返回的今日盈亏无效")
+            raise BetError("issueData 返回的今日盈亏无效")
         return result
 
     def submit(self, payload: dict) -> str:

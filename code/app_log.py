@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html
 import re
+import subprocess
+import sys
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -100,6 +102,25 @@ def subscribe(listener: Callable[[str, str], None]) -> Callable[[], None]:
             _listeners.remove(listener)
 
     return cancel
+
+
+def editor_command(path: Path) -> list[str]:
+    """Open the log with the system text editor, such as Notepad on Windows."""
+    text = str(path)
+    if sys.platform == "win32":
+        return ["notepad.exe", text]
+    if sys.platform == "darwin":
+        return ["open", "-e", text]
+    return ["xdg-open", text]
+
+
+def open_in_editor(path: Path | None = None) -> None:
+    path = LOG_FILE if path is None else path
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not path.exists():
+        path.touch(mode=0o600)
+    _restrict(path)
+    subprocess.Popen(editor_command(path))
 
 
 def clear() -> None:

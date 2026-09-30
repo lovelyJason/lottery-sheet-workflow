@@ -8,7 +8,7 @@ from PySide6.QtCore import QDate, QTimer, QUrl, Signal, Qt, QSignalBlocker
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox, QDateEdit, QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QMessageBox, QPushButton, QVBoxLayout,
+    QMessageBox, QPushButton, QSizePolicy, QVBoxLayout,
 )
 
 import app_log
@@ -21,7 +21,7 @@ from workbook_selection import select_workbook
 from history_worker import HistoryWorker
 from settings_store import load_settings, site_day
 from sheet_book import import_targets
-from ui_common import hug, polish
+from ui_common import hug
 
 class HistoryPanel(QFrame):
     results_changed = Signal(object)
@@ -42,21 +42,13 @@ class HistoryPanel(QFrame):
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self._launch)
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 18, 20, 18)
-        root.setSpacing(14)
-        head = QHBoxLayout()
-        title = QLabel("历史开奖补录")
-        title.setObjectName("heading")
-        self.phase = QLabel("待配置")
-        self.phase.setObjectName("syncBadge")
-        head.addWidget(title)
-        head.addStretch(1)
-        head.addWidget(self.phase)
-        root.addLayout(head)
+        root.setContentsMargins(20, 14, 20, 12)
+        root.setSpacing(8)
         self.file_card = QFrame()
         self.file_card.setObjectName("fileSurface")
+        self.file_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         file_layout = QVBoxLayout(self.file_card)
-        file_layout.setContentsMargins(14, 12, 14, 12)
+        file_layout.setContentsMargins(14, 14, 14, 24)
         file_layout.setSpacing(8)
         caption = QLabel("01  工作簿")
         caption.setObjectName("sectionLabel")
@@ -71,16 +63,18 @@ class HistoryPanel(QFrame):
         self.file_hint.setWordWrap(True)
         file_layout.addWidget(self.file_hint)
         files = QHBoxLayout()
-        files.setSpacing(8)
+        files.setSpacing(10)
+        files.setAlignment(Qt.AlignVCenter)
         self.choose = hug(QPushButton("选择 Excel"))
         self.choose.setToolTip("选择用于历史补录的 Excel，写入方式由右侧复选框决定")
         self.choose.clicked.connect(self._choose)
         self.use_copy = QCheckBox("使用副本（保留源 Excel）")
+        self.use_copy.setObjectName("copyToggle")
         self.use_copy.setChecked(self.config.get("use_copy", True))
         self.use_copy.setToolTip("勾选：在同目录创建副本；取消：直接修改选中的 Excel。仅补录 B 列空白。")
         self.use_copy.toggled.connect(self._mode_changed)
-        files.addWidget(self.choose)
-        files.addWidget(self.use_copy)
+        files.addWidget(self.choose, alignment=Qt.AlignVCenter)
+        files.addWidget(self.use_copy, alignment=Qt.AlignVCenter)
         files.addStretch(1)
         file_layout.addLayout(files)
         root.addWidget(self.file_card)
@@ -136,6 +130,7 @@ class HistoryPanel(QFrame):
         scope = QLabel("支持完整期号 / 后三位；跨周期请使用完整期号。")
         scope.setObjectName("hint")
         root.addWidget(scope)
+        root.addStretch(1)
         self._controls()
 
     @property
@@ -158,9 +153,6 @@ class HistoryPanel(QFrame):
             if self.use_copy.isChecked() else
             "直接修改：补录到所选源 Excel，仅填写 B 列空白。"
         )
-        self.phase.setText("正在查询" if self.busy else "轮询中" if self.running else "已就绪" if path else "待配置")
-        self.phase.setProperty("active", self.busy or self.running)
-        polish(self.phase)
         interval = load_settings().poll_interval
         self.interval_label.setText(f"间隔 {interval} 秒" if interval else "间隔：请到运行配置设置")
 
@@ -276,7 +268,10 @@ class HistoryPanel(QFrame):
                                    settings.bet_start_offset,
                                    settings.bet_points_schedule)
             elif settings.auto_bet:
-                app_log.warn(settings.profit_halt_reason or "今日已达到盈亏停止值，自动投注保持停止")
+                # The stop is latched for the China-calendar day. The separate
+                # profit timer keeps the home value current without repeating
+                # the same warning and alarm on every history poll.
+                pass
             self._save()
         except (OSError, ValueError) as exc:
             self._error(str(exc))

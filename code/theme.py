@@ -162,14 +162,16 @@ QPlainTextEdit {{
 QLineEdit:focus, QPlainTextEdit:focus {{
     border: 2px solid {BLUE};
 }}
-QScrollArea#pointsScroll {{
+QFrame#pointsFrame {{
     background: {WHITE};
     border: 1px solid {LINE};
     border-radius: 12px;
 }}
+QScrollArea#pointsScroll,
 QScrollArea#pointsScroll QWidget#qt_scrollarea_viewport,
 QWidget#pointsContainer {{
-    background: {WHITE};
+    background: transparent;
+    border: none;
 }}
 QLabel#error {{
     color: {RED};
@@ -202,6 +204,15 @@ QScrollBar::handle:vertical:hover {{
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0;
+}}
+QStatusBar {{
+    background: {PAPER};
+    color: {MUTED};
+    border-top: 1px solid {LINE};
+    font-size: 12px;
+}}
+QStatusBar::item {{
+    border: none;
 }}
 QMessageBox {{
     background: {PAPER};
@@ -256,6 +267,13 @@ QPushButton[role="primary"]:pressed {{ background: {BLUE_PRESS}; color: {WHITE};
 QPushButton:disabled, QPushButton[role="primary"]:disabled {{
     background: #F2F5F9; color: #A1ACBA; border-color: {CONFIG_LINE};
 }}
+QCheckBox#copyToggle {{
+    spacing: 8px; padding: 0px; margin: 0px;
+}}
+QCheckBox#copyToggle::indicator {{
+    subcontrol-origin: content;
+    subcontrol-position: left center;
+}}
 QCheckBox {{ color: {INK}; font-size: 13px; spacing: 8px; background: transparent; }}
 QCheckBox::indicator {{ width: 16px; height: 16px; }}
 QCheckBox:disabled {{ color: #9BA8B8; }}
@@ -285,5 +303,9 @@ QCheckBox::indicator:checked {{
     image: url("{_CONFIG_ASSETS}/config-check.svg");
 }}
 QCheckBox::indicator:disabled {{ border-color: {CONFIG_LINE}; background: #E5EBF2; }}
+QCheckBox#copyToggle::indicator {{
+    subcontrol-origin: content;
+    subcontrol-position: left center;
+}}
 QDateEdit::down-arrow {{ image: url("{_CONFIG_ASSETS}/config-down.svg"); width: 12px; height: 8px; }}
 """

@@ -5,15 +5,31 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 from debug_tools import DebugDialog, development_mode
+from ui_common import unread_icon
 
 
 class DebugToolsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def test_unread_dot_is_a_full_circle(self):
+        image = unread_icon().pixmap(QSize(8, 8)).toImage().convertToFormat(QImage.Format_ARGB32)
+        width, height = image.width(), image.height()
+
+        def alpha(x: int, y: int) -> int:
+            return image.pixelColor(x, y).alpha()
+
+        self.assertGreater(alpha(width // 2, height // 2), 200)
+        self.assertGreater(alpha(width // 2, 2), 80)
+        self.assertGreater(alpha(width // 2, height - 3), 80)
+        self.assertGreater(alpha(2, height // 2), 80)
+        self.assertGreater(alpha(width - 3, height // 2), 80)
 
     def test_running_main_source_is_development_mode(self):
         with patch.dict(os.environ, {"LOTTERY_DEV_MODE": ""}), patch.object(sys, "argv", ["main.py"]):

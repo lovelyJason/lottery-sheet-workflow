@@ -58,6 +58,23 @@ class SettingsStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "分别填写"):
             settings_store.save_bets("3", ["1", "2"], True, "0")
 
+    def test_history_and_profit_intervals_are_saved_separately(self):
+        self.assertEqual(settings_store.save_poll_intervals("20", "45"), (20, 45))
+        value = settings_store.load_settings()
+        self.assertEqual(value.poll_interval, 20)
+        self.assertEqual(value.profit_poll_interval, 45)
+
+    def test_profit_halt_is_latched_for_the_rest_of_china_day(self):
+        settings_store.save_bets("1", ["1"], True, "0", "500", "300")
+        halted, original = settings_store.save_profit_snapshot(-350)
+        self.assertTrue(halted)
+        halted, reason = settings_store.save_profit_snapshot(-10)
+        self.assertTrue(halted)
+        self.assertEqual(reason, original)
+        value = settings_store.load_settings()
+        self.assertEqual(value.today_profit, -10)
+        self.assertEqual(value.profit_halt_date, "2026-09-29")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -87,15 +87,16 @@ def set_badge(label: QLabel, ready: bool, text: str = "") -> None:
 
 
 def unread_icon() -> QIcon:
-    side = 16
-    pixmap = QPixmap(side, side)
-    pixmap.setDevicePixelRatio(2)
+    logical = 8
+    scale = 2
+    pixmap = QPixmap(logical * scale, logical * scale)
+    pixmap.setDevicePixelRatio(scale)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing, True)
     painter.setPen(Qt.NoPen)
     painter.setBrush(QColor("#A7ADB6"))
-    painter.drawEllipse(1, 1, side - 2, side - 2)
+    painter.drawEllipse(0, 0, logical, logical)
     painter.end()
     return QIcon(pixmap)
 

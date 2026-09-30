@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget,
@@ -17,6 +17,7 @@ from login_dialog import LoginDialog
 from result_dialogs import HistoryDialog, LogDialog
 from profit_worker import ProfitWorker
 from settings_store import load_settings, save_profit_snapshot, site_day
+from resource_status import ResourceStatus
 from sheet_panel import SheetPanel
 from theme import APP_STYLESHEET, CONFIG_BG
 from ui_common import enable_terminal_interrupt, hug, set_unread
@@ -28,7 +29,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.debug_button = None
         self.setWindowTitle(APP_TITLE)
-        self.setMinimumSize(760, 640)
+        self.setMinimumSize(760, 600)
         self.setWindowIcon(build_qicon())
         canvas = QWidget()
         canvas.setObjectName("canvas")
@@ -43,6 +44,12 @@ class MainWindow(QMainWindow):
         self.history_panel.alert_requested.connect(self.alerter.alert)
         self.history_panel.profit_checked.connect(self._automatic_profit_succeeded)
         self.profit_worker = None
+        self._profit_automatic = False
+        self._profit_was_halted = False
+        self.profit_timer = QTimer(self)
+        self.profit_timer.timeout.connect(
+            lambda: self.refresh_profit(automatic=True)
+        )
         root.addWidget(self.sheet_panel, 1)
         self.login_dialog = LoginDialog(self)
         self.login_dialog.changed.connect(self.refresh_login_badge)
@@ -51,10 +58,13 @@ class MainWindow(QMainWindow):
         self.history_panel.idle.connect(self._close_when_idle)
         self.history_panel.state_changed.connect(self._sync_controls)
         self.setCentralWidget(canvas)
+        self.statusBar().setSizeGripEnabled(False)
+        self.statusBar().addWidget(ResourceStatus(self), 1)
         self.refresh_login_badge()
         self.refresh_bet_badge()
         self.refresh_run_badge()
-        self.resize(800, 640)
+        self._configure_profit_timer()
+        self.resize(800, 600)
         if development_mode():
             self._create_debug_button()
 
@@ -76,9 +86,10 @@ class MainWindow(QMainWindow):
     def _position_debug_button(self) -> None:
         if self.debug_button is not None:
             margin = 18
+            status_height = self.statusBar().sizeHint().height()
             self.debug_button.move(
                 self.width() - self.debug_button.width() - margin,
-                self.height() - self.debug_button.height() - 66,
+                self.height() - self.debug_button.height() - 66 - status_height,
             )
             self.debug_button.raise_()
 
@@ -145,6 +156,7 @@ class MainWindow(QMainWindow):
             return
         self.history_panel.running = False
         self.history_panel.timer.stop()
+        self.profit_timer.stop()
         self.login_dialog.reject()
         super().closeEvent(event)
 
@@ -153,7 +165,7 @@ class MainWindow(QMainWindow):
                 self.profit_worker and self.profit_worker.isRunning()):
             self.close()
 
-    def refresh_profit(self) -> None:
+    def refresh_profit(self, _checked: bool = False, automatic: bool = False) -> None:
         if self.profit_worker is not None:
             return
         settings, auth = load_settings(), load()
@@ -165,6 +177,8 @@ class MainWindow(QMainWindow):
             return
         self.profit_label.setText("今日盈亏：查询中…")
         self.profit_refresh.setEnabled(False)
+        self._profit_automatic = automatic
+        self._profit_was_halted = settings.profit_halt_date == site_day()
         self.profit_worker = ProfitWorker(settings.url, auth, self)
         self.profit_worker.succeeded.connect(self._profit_succeeded)
         self.profit_worker.failed.connect(self._profit_failed)
@@ -179,8 +193,10 @@ class MainWindow(QMainWindow):
             return
         shown = f"{value:g}"
         self._show_profit(value, halted)
-        app_log.info(f"今日盈亏已刷新：{shown}")
-        if halted:
+        app_log.info(
+            f"今日盈亏已{'自动' if self._profit_automatic else '手动'}刷新：{shown}"
+        )
+        if halted and not self._profit_was_halted:
             app_log.warn(reason + "，今日自动投注已停止")
             self.alerter.alert("盈亏停止投注", reason)
 
@@ -203,6 +219,8 @@ class MainWindow(QMainWindow):
 
     def _profit_finished(self) -> None:
         worker, self.profit_worker = self.profit_worker, None
+        self._profit_automatic = False
+        self._profit_was_halted = False
         if worker is not None:
             worker.deleteLater()
         self.profit_refresh.setEnabled(True)
@@ -222,12 +240,22 @@ class MainWindow(QMainWindow):
             self.profit_label.setText(f"今日盈亏：{settings.today_profit:g}{suffix}")
 
     def refresh_run_badge(self) -> None:
-        ready = load_settings().poll_interval is not None
+        settings = load_settings()
+        ready = (settings.poll_interval is not None
+                 and settings.profit_poll_interval is not None)
         set_unread(self.run_btn, not ready)
+
+    def _configure_profit_timer(self) -> None:
+        interval = load_settings().profit_poll_interval
+        if interval and interval <= 2_147_483:
+            self.profit_timer.start(interval * 1000)
+        else:
+            self.profit_timer.stop()
 
     def open_run_dialog(self) -> None:
         RunDialog(self).exec()
         self.refresh_run_badge()
+        self._configure_profit_timer()
         self.history_panel._controls()
 
     def open_bet_dialog(self) -> None:

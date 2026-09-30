@@ -105,7 +105,7 @@ class HistoryGuiTests(unittest.TestCase):
         self.assertEqual(self.window.login_btn.text(), "登录管理")
         self.assertTrue(self.window.login_dialog.isAncestorOf(self.window.login_dialog.url_edit))
         self.assertGreaterEqual(self.window.width(), 760)
-        self.assertGreaterEqual(self.window.height(), 640)
+        self.assertGreaterEqual(self.window.height(), 600)
         buttons = [b.text() for b in self.window.centralWidget().findChildren(QPushButton)]
         self.assertEqual(buttons.count("开始"), 1)
         self.assertNotIn("立即补录", buttons)
@@ -232,12 +232,27 @@ class HistoryGuiTests(unittest.TestCase):
         self.assertIn("轮询间隔", self.panel.note.text())
 
     def test_run_settings_refresh_the_home_interval(self):
-        settings = Settings("https://web.example.test", None, None, 17)
+        settings = Settings("https://web.example.test", None, None, 17,
+                            profit_poll_interval=23)
         with patch("main.RunDialog") as dialog, \
-                patch("history_panel.load_settings", return_value=settings):
+                patch("history_panel.load_settings", return_value=settings), \
+                patch("main.load_settings", return_value=settings):
             self.window.run_btn.click()
         dialog.return_value.exec.assert_called_once()
         self.assertEqual(self.panel.interval_label.text(), "间隔 17 秒")
+        self.assertTrue(self.window.profit_timer.isActive())
+        self.assertEqual(self.window.profit_timer.interval(), 23_000)
+
+    def test_profit_timer_refreshes_home_value_without_history_or_bet(self):
+        settings = Settings("https://web.example.test", None, None, 60,
+                            auto_bet=False, profit_poll_interval=1)
+        refresh = Mock()
+        self.window.refresh_profit = refresh
+        with patch("main.load_settings", return_value=settings):
+            self.window._configure_profit_timer()
+        self._until(lambda: refresh.called)
+        refresh.assert_called_with(automatic=True)
+        self.window.profit_timer.stop()
 
     def test_history_close_during_fetch_keeps_the_thread(self):
         from unittest.mock import patch

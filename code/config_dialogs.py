@@ -19,7 +19,7 @@ from app_log import document_html, subscribe
 from app_icon import ICON_JPG as ICON_PATH
 from app_icon import apply_app_icon, build_qicon, set_windows_app_user_model_id
 from auth_storage import clear, load, save, validate_payload
-from settings_store import load_settings, save_bets, save_poll_interval, save_url
+from settings_store import load_settings, save_bets, save_poll_intervals, save_url
 from sheet_book import import_targets, load_targets, save_targets, write_template
 from theme import APP_STYLESHEET
 
@@ -52,10 +52,16 @@ class BetDialog(QDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("投注参数")
-        self.setMinimumWidth(540)
+        self.setMinimumWidth(560)
+        self.setStyleSheet(
+            "QFrame#autoCard, QFrame#formCard {"
+            "background:#FFFFFF;border:1px solid #E4DCCE;border-radius:16px;}"
+            "QFrame#autoCard QLabel#autoTitle {font-size:15px;font-weight:700;color:#1C2430;}"
+            "QFrame#formCard QLabel#caption {color:#5E6876;font-size:13px;}"
+        )
         root = QVBoxLayout(self)
-        root.setContentsMargins(22, 20, 22, 18)
-        root.setSpacing(12)
+        root.setContentsMargins(22, 18, 22, 16)
+        root.setSpacing(14)
 
         head = QHBoxLayout()
         head.setSpacing(8)
@@ -74,17 +80,43 @@ class BetDialog(QDialog):
         head.addWidget(self.badge)
         root.addLayout(head)
 
+        auto_card = QFrame()
+        auto_card.setObjectName("autoCard")
+        auto_card.setAttribute(Qt.WA_StyledBackground, True)
+        auto_layout = QHBoxLayout(auto_card)
+        auto_layout.setContentsMargins(16, 14, 16, 14)
+        auto_layout.setSpacing(12)
+        auto_text = QVBoxLayout()
+        auto_text.setSpacing(4)
+        auto_title = QLabel("是否自动投注")
+        auto_title.setObjectName("autoTitle")
+        self.auto_hint = QLabel("关闭后不会按 D=0 自动下单。")
+        self.auto_hint.setObjectName("hint")
+        self.auto_hint.setWordWrap(True)
+        auto_text.addWidget(auto_title)
+        auto_text.addWidget(self.auto_hint)
+        self.auto_bet = Switch()
+        auto_layout.addLayout(auto_text, 1)
+        auto_layout.addWidget(self.auto_bet, alignment=Qt.AlignVCenter)
+        root.addWidget(auto_card)
+
+        self.form_panel = QFrame()
+        self.form_panel.setObjectName("formCard")
+        self.form_panel.setAttribute(Qt.WA_StyledBackground, True)
+        panel = QVBoxLayout(self.form_panel)
+        panel.setContentsMargins(16, 14, 16, 16)
+        panel.setSpacing(12)
         self.status = QLabel(
             "D 列每次归零都会重启投注轮次；可设置跳过多少期后再连续投注。"
         )
         self.status.setObjectName("hint")
         self.status.setWordWrap(True)
-        root.addWidget(self.status)
+        panel.addWidget(self.status)
 
         form = QGridLayout()
-        form.setContentsMargins(0, 4, 0, 4)
-        form.setHorizontalSpacing(16)
-        form.setVerticalSpacing(8)
+        form.setContentsMargins(0, 2, 0, 0)
+        form.setHorizontalSpacing(18)
+        form.setVerticalSpacing(12)
         form.setColumnStretch(1, 1)
         self.bet_delay = self._field(
             form, 0, "延后期数", allow_zero=True,
@@ -123,14 +155,21 @@ class BetDialog(QDialog):
         points_caption_row.addWidget(points_label)
         points_caption_row.addWidget(points_help)
         points_caption_row.addStretch(1)
+        self.points_frame = QFrame()
+        self.points_frame.setObjectName("pointsFrame")
+        self.points_frame.setAttribute(Qt.WA_StyledBackground, True)
+        points_frame_layout = QVBoxLayout(self.points_frame)
+        points_frame_layout.setContentsMargins(1, 1, 1, 1)
+        points_frame_layout.setSpacing(0)
         self.points_scroll = QScrollArea()
         self.points_scroll.setObjectName("pointsScroll")
         self.points_scroll.setWidgetResizable(True)
         self.points_scroll.setFrameShape(QFrame.NoFrame)
         self.points_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.points_scroll.setMinimumWidth(292)
+        self.points_scroll.setMinimumWidth(220)
         self.points_scroll.setMaximumHeight(202)
         self.points_scroll.setMinimumHeight(62)
+        self.points_scroll.viewport().setAutoFillBackground(False)
         self.points_container = QWidget()
         self.points_container.setObjectName("pointsContainer")
         self.points_container.setAttribute(Qt.WA_StyledBackground, True)
@@ -139,20 +178,16 @@ class BetDialog(QDialog):
         self.points_grid.setHorizontalSpacing(14)
         self.points_grid.setVerticalSpacing(8)
         self.points_scroll.setWidget(self.points_container)
+        points_frame_layout.addWidget(self.points_scroll)
         self.point_edits: list[QLineEdit] = []
         form.addWidget(points_caption, 2, 0, alignment=Qt.AlignTop)
-        form.addWidget(self.points_scroll, 2, 1)
+        form.addWidget(self.points_frame, 2, 1)
         self.profit_limit = self._field(form, 3, "盈利达到停止")
         self.profit_limit.setPlaceholderText("可留空")
         self.loss_limit = self._field(form, 4, "亏损达到停止")
         self.loss_limit.setPlaceholderText("填正数，可留空")
-        auto_caption = QLabel("是否自动投注")
-        auto_caption.setObjectName("caption")
-        auto_caption.setMinimumWidth(108)
-        self.auto_bet = Switch()
-        form.addWidget(auto_caption, 5, 0)
-        form.addWidget(self.auto_bet, 5, 1, alignment=Qt.AlignLeft | Qt.AlignVCenter)
-        root.addLayout(form)
+        panel.addLayout(form)
+        root.addWidget(self.form_panel)
         self.bet_count.textChanged.connect(self._sync_point_fields)
         self.auto_bet.toggled.connect(self._sync_auto_fields)
 
@@ -202,7 +237,8 @@ class BetDialog(QDialog):
             label_row.addStretch(1)
         edit = QLineEdit()
         edit.setPlaceholderText("0或正整数" if allow_zero else "正整数")
-        edit.setFixedWidth(160)
+        edit.setMinimumWidth(220)
+        edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         edit.setValidator(
             QRegularExpressionValidator(
                 QRegularExpression(QRegularExpression.anchoredPattern(
@@ -231,9 +267,12 @@ class BetDialog(QDialog):
         )
 
     def _sync_auto_fields(self, enabled: bool) -> None:
-        for edit in (self.profit_limit, self.loss_limit):
-            edit.setVisible(enabled)
-            edit._field_label_widget.setVisible(enabled)
+        self.form_panel.setVisible(enabled)
+        self.auto_hint.setText(
+            "开启后，D=0 会按下面的期数和积分自动下单。"
+            if enabled else "关闭后不会按 D=0 自动下单。"
+        )
+        self.adjustSize()
 
     def _sync_point_fields(self, text: str) -> None:
         if not text.isdigit():
@@ -333,9 +372,9 @@ class RunDialog(QDialog):
         form.setContentsMargins(0, 4, 0, 4)
         form.setHorizontalSpacing(16)
         form.setVerticalSpacing(8)
-        caption = QLabel("轮询时间间隔")
+        caption = QLabel("查询与下注轮询时间间隔")
         caption.setObjectName("caption")
-        caption.setMinimumWidth(108)
+        caption.setMinimumWidth(176)
         self.interval = QLineEdit()
         self.interval.setPlaceholderText("正整数")
         self.interval.setFixedWidth(120)
@@ -355,6 +394,29 @@ class RunDialog(QDialog):
         field.addStretch(1)
         form.addWidget(caption, 0, 0)
         form.addLayout(field, 0, 1)
+
+        profit_caption = QLabel("查询盈亏值时间间隔")
+        profit_caption.setObjectName("caption")
+        profit_caption.setMinimumWidth(176)
+        self.profit_interval = QLineEdit()
+        self.profit_interval.setPlaceholderText("正整数")
+        self.profit_interval.setFixedWidth(120)
+        self.profit_interval.setValidator(
+            QRegularExpressionValidator(
+                QRegularExpression(QRegularExpression.anchoredPattern(r"[1-9]\d{0,8}"))
+            )
+        )
+        self.profit_interval.setInputMethodHints(Qt.ImhDigitsOnly)
+        profit_suffix = QLabel("秒")
+        profit_suffix.setObjectName("caption")
+        profit_field = QHBoxLayout()
+        profit_field.setContentsMargins(0, 0, 0, 0)
+        profit_field.setSpacing(8)
+        profit_field.addWidget(self.profit_interval)
+        profit_field.addWidget(profit_suffix)
+        profit_field.addStretch(1)
+        form.addWidget(profit_caption, 1, 0)
+        form.addLayout(profit_field, 1, 1)
         root.addLayout(form)
 
         self.error = QLabel("")
@@ -379,7 +441,14 @@ class RunDialog(QDialog):
     def _load(self) -> None:
         settings = load_settings()
         self.interval.setText("" if settings.poll_interval is None else str(settings.poll_interval))
-        self._show_status(settings.poll_interval is not None)
+        self.profit_interval.setText(
+            "" if settings.profit_poll_interval is None
+            else str(settings.profit_poll_interval)
+        )
+        self._show_status(
+            settings.poll_interval is not None
+            and settings.profit_poll_interval is not None
+        )
 
     def _show_status(self, saved: bool) -> None:
         self.unread.setVisible(not saved)
@@ -390,7 +459,9 @@ class RunDialog(QDialog):
 
     def _save(self) -> None:
         try:
-            interval = save_poll_interval(self.interval.text())
+            interval, profit_interval = save_poll_intervals(
+                self.interval.text(), self.profit_interval.text()
+            )
         except ValueError as exc:
             self.status.hide()
             self.error.setText(str(exc))
@@ -399,4 +470,5 @@ class RunDialog(QDialog):
             set_badge(self.badge, False)
             return
         self.interval.setText(str(interval))
+        self.profit_interval.setText(str(profit_interval))
         self._show_status(True)

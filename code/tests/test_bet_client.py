@@ -145,16 +145,25 @@ class RunnerTests(unittest.TestCase):
 
 
 class ClientContractTests(unittest.TestCase):
-    def test_today_profit_uses_get_user_info_total_win(self):
+    def test_today_profit_uses_same_issue_data_total_win_as_webpage(self):
         opener = Opener(
             {"domain": "https://api.example.test"},
-            {"code": 200, "encrypt": False, "data": {"totalWin": "-431.5"}},
+            {"code": 200, "encrypt": False, "data": {
+                "game_list": {"bingo": {"list": {
+                    "bingoLh": {"key": "bingoLh", "id": 270048}
+                }}}
+            }},
+            {"code": 200, "encrypt": False, "data": {
+                "next": {"nextIssue": "115055012", "totalWin": "-431.5"}
+            }},
         )
         client = BetClient(
             "https://web.example.test", {"token": "TOKEN", "uuid": "UUID"}, opener
         )
         self.assertEqual(client.today_profit(), -431.5)
-        self.assertTrue(opener.requests[-1].full_url.endswith("/api/v1/member/getUserInfo"))
+        self.assertTrue(opener.requests[-1].full_url.endswith(
+            "/api/v1/member/issueData/270048"
+        ))
 
     def test_live_contract_builds_only_special_code_b(self):
         odds = {f"specialCodeB_guessNumberB_{n}": 48.65 for n in range(1, 50)}

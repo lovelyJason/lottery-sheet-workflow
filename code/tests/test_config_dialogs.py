@@ -4,9 +4,9 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QToolButton
+from PySide6.QtWidgets import QApplication, QLabel, QToolButton
 
-from config_dialogs import BetDialog
+from config_dialogs import BetDialog, RunDialog
 from settings_store import Settings
 
 
@@ -34,20 +34,45 @@ class BetDialogTests(unittest.TestCase):
         finally:
             dialog.deleteLater()
 
+    def test_run_dialog_has_separate_history_and_profit_intervals(self):
+        with patch("config_dialogs.load_settings", return_value=Settings(
+                "https://example.test", 2, 1, 10,
+                profit_poll_interval=25)):
+            dialog = RunDialog()
+        try:
+            self.assertEqual(dialog.interval.text(), "10")
+            self.assertEqual(dialog.profit_interval.text(), "25")
+            labels = [label.text() for label in dialog.findChildren(QLabel)]
+            self.assertIn("查询与下注轮询时间间隔", labels)
+            self.assertIn("查询盈亏值时间间隔", labels)
+            with patch("config_dialogs.save_poll_intervals",
+                       return_value=(12, 30)) as save:
+                dialog.interval.setText("12")
+                dialog.profit_interval.setText("30")
+                dialog._save()
+            save.assert_called_once_with("12", "30")
+        finally:
+            dialog.deleteLater()
+
     def test_profit_limits_follow_auto_bet_switch_visibility(self):
         with patch("config_dialogs.load_settings", return_value=Settings(
                 "https://example.test", 2, 1, 10, False, 1,
                 bet_points_schedule=(1, 2))):
             dialog = BetDialog()
         try:
-            self.assertTrue(dialog.profit_limit.isHidden())
-            self.assertTrue(dialog.loss_limit.isHidden())
-            self.assertTrue(dialog.profit_limit._field_label_widget.isHidden())
-            self.assertTrue(dialog.loss_limit._field_label_widget.isHidden())
+            dialog.show()
+            self.assertTrue(dialog.form_panel.isHidden())
+            self.assertFalse(dialog.bet_delay.isVisible())
+            self.assertFalse(dialog.bet_count.isVisible())
+            self.assertFalse(dialog.points_scroll.isVisible())
+            self.assertFalse(dialog.profit_limit.isVisible())
+            self.assertFalse(dialog.loss_limit.isVisible())
             dialog.auto_bet.setChecked(True)
-            self.assertFalse(dialog.profit_limit.isHidden())
-            self.assertFalse(dialog.loss_limit.isHidden())
-            self.assertFalse(dialog.profit_limit._field_label_widget.isHidden())
-            self.assertFalse(dialog.loss_limit._field_label_widget.isHidden())
+            self.assertFalse(dialog.form_panel.isHidden())
+            self.assertTrue(dialog.bet_delay.isVisible())
+            self.assertTrue(dialog.bet_count.isVisible())
+            self.assertTrue(dialog.points_scroll.isVisible())
+            self.assertTrue(dialog.profit_limit.isVisible())
+            self.assertTrue(dialog.loss_limit.isVisible())
         finally:
             dialog.deleteLater()

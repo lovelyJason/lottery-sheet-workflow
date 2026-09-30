@@ -12,7 +12,7 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QP
 from PySide6.QtWidgets import (
     QAbstractButton, QAbstractItemView, QApplication, QDialog, QDialogButtonBox, QFileDialog,
     QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QPushButton, QPlainTextEdit, QSizePolicy, QStyledItemDelegate, QTableWidget, QTableWidgetItem,
+    QPushButton, QPlainTextEdit, QStyledItemDelegate, QTableWidget, QTableWidgetItem,
     QTextEdit, QVBoxLayout, QWidget,
 )
 
@@ -539,50 +539,7 @@ class LogDialog(QDialog):
         self.resize(900, 560)
         self.setMinimumSize(720, 420)
         self.setStyleSheet(
-            "QDialog { background:#F3F6FA; }"
-            "QLabel#logTitle { color:#172033; font-size:20px; font-weight:700; }"
-            "QLabel#logHint { color:#68778C; font-size:12px; }"
-            "QLabel#logBadge { background:#E5F6EC; color:#176B3A; padding:4px 10px;"
-            " border-radius:10px; font-size:12px; font-weight:600; }"
-            "QFrame#logSurface { background:#101722; border:1px solid #253247;"
-            " border-radius:14px; }"
-        )
-        root = QVBoxLayout(self)
-        root.setContentsMargins(20, 18, 20, 18)
-        root.setSpacing(12)
-
-        header = QHBoxLayout()
-        title_box = QVBoxLayout()
-        title_box.setSpacing(2)
-        title = QLabel("运行日志")
-        title.setObjectName("logTitle")
-        hint = QLabel("历史日志会自动保留")
-        hint.setObjectName("logHint")
-        title_box.addWidget(title)
-        title_box.addWidget(hint)
-        badge = QLabel("持久化记录中")
-        badge.setObjectName("logBadge")
-        badge.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        clear_button = hug(QPushButton("清除日志"), "danger")
-        clear_button.clicked.connect(self._clear_log)
-        header.addLayout(title_box)
-        header.addStretch(1)
-        header.addWidget(clear_button, alignment=Qt.AlignVCenter)
-        header.addWidget(badge, alignment=Qt.AlignVCenter)
-        root.addLayout(header)
-
-        surface = QFrame()
-        surface.setObjectName("logSurface")
-        surface_layout = QVBoxLayout(surface)
-        surface_layout.setContentsMargins(10, 10, 6, 10)
-        self.view = QTextEdit()
-        self.view.setObjectName("console")
-        self.view.setReadOnly(True)
-        self.view.setFrameShape(QFrame.NoFrame)
-        self.view.setAcceptDrops(False)
-        self.view.setContextMenuPolicy(Qt.NoContextMenu)
-        self.view.document().setDocumentMargin(10)
-        self.view.setStyleSheet(
+            "QDialog { background:#101722; }"
             "QTextEdit#console {"
             "background:#101722; color:#E8EDF4; border:none;"
             "padding:0; margin:0; font-family:Menlo, Consolas, monospace; font-size:13px;"
@@ -591,24 +548,83 @@ class LogDialog(QDialog):
             "QTextEdit#console QScrollBar::handle:vertical { background:#3A4A62; border-radius:5px; min-height:28px; }"
             "QTextEdit#console QScrollBar::add-line:vertical, QTextEdit#console QScrollBar::sub-line:vertical { height:0; }"
             "QTextEdit#console QScrollBar::add-page:vertical, QTextEdit#console QScrollBar::sub-page:vertical { background:#101722; }"
+            "QWidget#logActions { background: transparent; }"
+            "QPushButton#logLink {"
+            "background: transparent; border: none; border-radius: 0;"
+            "color: #8E9AAB; padding: 0 2px; margin: 0;"
+            "font-size: 13px; font-weight: 400; min-height: 0;"
+            "}"
+            "QPushButton#logLink:hover { color: #E8EDF4; background: transparent; }"
+            "QPushButton#logLink:pressed { color: #FFFFFF; background: transparent; }"
+            "QPushButton#logLink:focus { border: none; background: transparent; }"
         )
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.view = QTextEdit()
+        self.view.setObjectName("console")
+        self.view.setReadOnly(True)
+        self.view.setFrameShape(QFrame.NoFrame)
+        self.view.setAcceptDrops(False)
+        self.view.setContextMenuPolicy(Qt.NoContextMenu)
+        self.view.document().setDocumentMargin(14)
         self.view.installEventFilter(self)
         self.view.viewport().installEventFilter(self)
         self.view.cursorPositionChanged.connect(self._stick_cursor)
         self._placing = False
-        surface_layout.addWidget(self.view, 1)
-        root.addWidget(surface, 1)
-        path_label = QLabel(f"日志文件：{app_log.LOG_FILE}")
-        path_label.setObjectName("logHint")
-        path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        root.addWidget(path_label)
+        self._placing_actions = False
+        root.addWidget(self.view, 1)
+        self.actions = QWidget(self)
+        self.actions.setObjectName("logActions")
+        self.actions.setAutoFillBackground(False)
+        actions = QHBoxLayout(self.actions)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(16)
+        open_button = hug(QPushButton("打开日志"))
+        clear_button = hug(QPushButton("清除日志"))
+        for button in (open_button, clear_button):
+            button.setObjectName("logLink")
+            button.setFlat(True)
+            button.setMinimumHeight(0)
+            button.setFocusPolicy(Qt.NoFocus)
+        open_button.clicked.connect(self._open_log)
+        clear_button.clicked.connect(self._clear_log)
+        actions.addWidget(open_button)
+        actions.addWidget(clear_button)
         self._cancel = subscribe(self._on_line)
         self._render()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._place_actions()
         self.view.setFocus(Qt.OtherFocusReason)
         self._stick_cursor()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._place_actions()
+
+    def _place_actions(self) -> None:
+        if self._placing_actions:
+            return
+        self._placing_actions = True
+        try:
+            self.actions.adjustSize()
+            inset = 14
+            self.actions.move(
+                max(0, self.width() - self.actions.width() - inset),
+                max(0, self.height() - self.actions.height() - inset),
+            )
+            self.actions.raise_()
+            self.view.setViewportMargins(0, 0, 0, self.actions.height() + inset)
+        finally:
+            self._placing_actions = False
+
+    def _open_log(self) -> None:
+        try:
+            app_log.open_in_editor()
+        except OSError as exc:
+            _notice(self, "打开失败", f"无法用文本编辑器打开日志：{exc}", warning=True)
 
     def eventFilter(self, watched, event) -> bool:
         if watched in (self.view, self.view.viewport()) and event.type() in (

@@ -28,6 +28,7 @@ class Settings:
     profit_halt_date: str = ""
     profit_halt_reason: str = ""
     bet_points_schedule: tuple[int, ...] = ()
+    profit_poll_interval: int | None = None
 
 
 def load_settings() -> Settings:
@@ -61,6 +62,7 @@ def load_settings() -> Settings:
         profit_halt_reason=(raw.get("profit_halt_reason")
                             if isinstance(raw.get("profit_halt_reason"), str) else ""),
         bet_points_schedule=schedule,
+        profit_poll_interval=_stored_positive(raw.get("profit_poll_interval")),
     )
 
 
@@ -72,11 +74,24 @@ def save_url(raw: str) -> str:
     return url
 
 
-def save_poll_interval(raw: str) -> int:
-    interval = parse_positive(raw, "轮询时间间隔")
+def save_poll_intervals(history_raw: str, profit_raw: str) -> tuple[int, int]:
+    interval = parse_positive(history_raw, "查询与下注轮询时间间隔")
+    profit_interval = parse_positive(profit_raw, "查询盈亏值时间间隔")
+    if interval > 2_147_483 or profit_interval > 2_147_483:
+        raise ValueError("轮询时间间隔最多为2147483秒")
     data = _read()
     data["poll_interval"] = interval
+    data["profit_poll_interval"] = profit_interval
     _write(data)
+    return interval, profit_interval
+
+
+def save_poll_interval(raw: str) -> int:
+    """Compatibility wrapper for older callers; preserve the profit interval."""
+    current = load_settings()
+    interval, _ = save_poll_intervals(
+        raw, str(current.profit_poll_interval or current.poll_interval or 60)
+    )
     return interval
 
 
@@ -119,15 +134,20 @@ def save_bets(count_raw: str, points_raw: str | list[str] | tuple[str, ...], aut
 
 
 def save_profit_snapshot(value: float) -> tuple[bool, str]:
-    """Persist the manually refreshed server value and arm today's bet halt."""
+    """Persist the current value and latch today's stop once a limit is reached."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError("今日盈亏值格式异常")
     data = _read()
     day = site_day()
     numeric = float(value)
-    halted, reason = profit_halt(
-        numeric, day, data.get("profit_limit"), data.get("loss_limit")
-    )
+    already_halted = data.get("profit_halt_date") == day
+    if already_halted:
+        halted = True
+        reason = str(data.get("profit_halt_reason") or "今日已达到盈亏停止值")
+    else:
+        halted, reason = profit_halt(
+            numeric, day, data.get("profit_limit"), data.get("loss_limit")
+        )
     data["today_profit"] = numeric
     data["profit_date"] = day
     data["profit_halt_date"] = day if halted else ""
@@ -221,6 +241,7 @@ def _read() -> dict:
         "profit_date": current.profit_date,
         "profit_halt_date": current.profit_halt_date,
         "profit_halt_reason": current.profit_halt_reason,
+        "profit_poll_interval": current.profit_poll_interval,
     }
 
 
