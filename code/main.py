@@ -20,8 +20,7 @@ from settings_store import load_settings, save_profit_snapshot, site_day
 from sheet_panel import SheetPanel
 from theme import APP_STYLESHEET, CONFIG_BG
 from ui_common import enable_terminal_interrupt, hug, set_unread
-
-APP_TITLE = "黄金万两 v1.0.0"
+from version import APP_TITLE, APP_VERSION
 
 
 class MainWindow(QMainWindow):
@@ -29,7 +28,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.debug_button = None
         self.setWindowTitle(APP_TITLE)
-        self.setMinimumSize(680, 640)
+        self.setMinimumSize(760, 640)
         self.setWindowIcon(build_qicon())
         canvas = QWidget()
         canvas.setObjectName("canvas")
@@ -42,6 +41,7 @@ class MainWindow(QMainWindow):
         self.history_panel = self.sheet_panel.history_panel
         self.alerter = SystemAlerter(self)
         self.history_panel.alert_requested.connect(self.alerter.alert)
+        self.history_panel.profit_checked.connect(self._automatic_profit_succeeded)
         self.profit_worker = None
         root.addWidget(self.sheet_panel, 1)
         self.login_dialog = LoginDialog(self)
@@ -54,7 +54,7 @@ class MainWindow(QMainWindow):
         self.refresh_login_badge()
         self.refresh_bet_badge()
         self.refresh_run_badge()
-        self.resize(720, 640)
+        self.resize(800, 640)
         if development_mode():
             self._create_debug_button()
 
@@ -178,11 +178,23 @@ class MainWindow(QMainWindow):
             self._profit_failed(str(exc))
             return
         shown = f"{value:g}"
-        self.profit_label.setText(f"今日盈亏：{shown}" + ("（已停投）" if halted else ""))
+        self._show_profit(value, halted)
         app_log.info(f"今日盈亏已刷新：{shown}")
         if halted:
             app_log.warn(reason + "，今日自动投注已停止")
             self.alerter.alert("盈亏停止投注", reason)
+
+    def _automatic_profit_succeeded(self, value: float, halted: bool, reason: str) -> None:
+        self._show_profit(value, halted)
+        app_log.info(f"今日盈亏已自动检查：{value:g}")
+        if halted:
+            app_log.warn(reason + "，今日自动投注已停止")
+            self.alerter.alert("盈亏停止投注", reason)
+
+    def _show_profit(self, value: float, halted: bool) -> None:
+        self.profit_label.setText(
+            f"今日盈亏：{value:g}" + ("（已停投）" if halted else "")
+        )
 
     def _profit_failed(self, reason: str) -> None:
         self.profit_label.setText("今日盈亏：查询失败")
@@ -227,7 +239,7 @@ def main() -> int:
     set_windows_app_user_model_id()
     app = QApplication(sys.argv)
     app.setApplicationName("黄金万两")
-    app.setApplicationVersion("1.0.0")
+    app.setApplicationVersion(APP_VERSION)
     app.setApplicationDisplayName(APP_TITLE)
     enable_terminal_interrupt()
     app.setStyle("Fusion")

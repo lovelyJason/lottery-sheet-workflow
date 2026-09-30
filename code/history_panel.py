@@ -29,6 +29,7 @@ class HistoryPanel(QFrame):
     idle = Signal()
     state_changed = Signal(bool)
     alert_requested = Signal(str, str)
+    profit_checked = Signal(float, bool, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -285,6 +286,8 @@ class HistoryPanel(QFrame):
         self.worker.progress.connect(self._progress)
         self.worker.bet_succeeded.connect(app_log.info)
         self.worker.bet_failed.connect(self._bet_failed)
+        self.worker.profit_checked.connect(self.profit_checked.emit)
+        self.worker.profit_failed.connect(self._profit_failed)
         self.worker.succeeded.connect(self._success)
         self.worker.failed.connect(self._error)
         self.worker.finished.connect(self._finished)
@@ -298,6 +301,10 @@ class HistoryPanel(QFrame):
     def _bet_failed(self, text: str) -> None:
         app_log.error(text)
         self.alert_requested.emit("投注失败", text)
+
+    def _profit_failed(self, text: str) -> None:
+        app_log.error(text)
+        self.alert_requested.emit("盈亏查询失败", text)
 
     def _success(self, result: dict) -> None:
         self.last_rows = result["rows"]

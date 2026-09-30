@@ -130,5 +130,61 @@ class WorkerTests(unittest.TestCase):
         self.assertTrue(successes)
         self.assertIn("今日亏损达到停止值", progress)
 
+    def test_profit_is_automatically_checked_and_halts_before_betting(self):
+        worker = HistoryWorker("https://web.example.test", {}, str(self.path), "2026-09-30",
+                               bet_plan=BetPlan(1, 2, "2", "猴"))
+        checked, successes, errors = [], [], []
+        worker.profit_checked.connect(
+            lambda value, halted, reason: checked.append((value, halted, reason))
+        )
+        worker.succeeded.connect(successes.append)
+        worker.profit_failed.connect(errors.append)
+        settings = SimpleNamespace(
+            profit_halt_date="", profit_halt_reason="",
+            profit_limit=6000, loss_limit=6000,
+        )
+        with patch("history_worker.HistoryClient") as history, \
+             patch("history_worker.AutoBetRunner") as runner, \
+             patch("history_worker.load_settings", return_value=settings), \
+             patch("history_worker.save_profit_snapshot", return_value=(
+                 True, "今日亏损 8552.6 已达到停止值 6000"
+             )) as save_snapshot:
+            history.return_value.fetch_page.return_value = [
+                {"issue": "115054996", "special_code": 33},
+                {"issue": "115054980", "special_code": 24},
+            ]
+            runner.return_value.client.today_profit.return_value = -8552.6
+            worker.run()
+        save_snapshot.assert_called_once_with(-8552.6)
+        runner.return_value.run_once.assert_not_called()
+        self.assertEqual(checked, [(
+            -8552.6, True, "今日亏损 8552.6 已达到停止值 6000"
+        )])
+        self.assertTrue(successes)
+        self.assertFalse(errors)
+
+    def test_profit_check_failure_skips_bet_for_that_cycle(self):
+        worker = HistoryWorker("https://web.example.test", {}, str(self.path), "2026-09-30",
+                               bet_plan=BetPlan(1, 2, "2", "猴"))
+        failures = []
+        worker.profit_failed.connect(failures.append)
+        settings = SimpleNamespace(
+            profit_halt_date="", profit_halt_reason="",
+            profit_limit=6000, loss_limit=6000,
+        )
+        with patch("history_worker.HistoryClient") as history, \
+             patch("history_worker.AutoBetRunner") as runner, \
+             patch("history_worker.load_settings", return_value=settings):
+            history.return_value.fetch_page.return_value = [
+                {"issue": "115054996", "special_code": 33},
+                {"issue": "115054980", "special_code": 24},
+            ]
+            runner.return_value.client.today_profit.side_effect = BetError("登录态失效")
+            worker.run()
+        runner.return_value.run_once.assert_not_called()
+        self.assertEqual(
+            failures, ["自动盈亏检查失败，本期停止投注：登录态失效"]
+        )
+
 if __name__ == "__main__":
     unittest.main()

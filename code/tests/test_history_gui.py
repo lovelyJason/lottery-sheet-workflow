@@ -104,7 +104,7 @@ class HistoryGuiTests(unittest.TestCase):
         self.assertFalse(self.window.login_dialog.isVisible())
         self.assertEqual(self.window.login_btn.text(), "登录管理")
         self.assertTrue(self.window.login_dialog.isAncestorOf(self.window.login_dialog.url_edit))
-        self.assertGreaterEqual(self.window.width(), 680)
+        self.assertGreaterEqual(self.window.width(), 760)
         self.assertGreaterEqual(self.window.height(), 640)
         buttons = [b.text() for b in self.window.centralWidget().findChildren(QPushButton)]
         self.assertEqual(buttons.count("开始"), 1)

@@ -9,7 +9,7 @@ from bet_client import AutoBetRunner, BetPlan
 from history_client import HistoryClient, HistoryError, safe_message
 from history_excel import WorkbookSync
 from sheet_book import import_targets, zero_trigger_issue
-from settings_store import load_settings, site_day
+from settings_store import load_settings, save_profit_snapshot, site_day
 
 
 class ResultFetchWorker(QThread):
@@ -46,6 +46,8 @@ class HistoryWorker(QThread):
     progress = Signal(str)
     bet_succeeded = Signal(str)
     bet_failed = Signal(str)
+    profit_checked = Signal(float, bool, str)
+    profit_failed = Signal(str)
 
     def __init__(self, site: str, auth: dict, workbook: str, day: str,
                  parent=None, bet_plan: BetPlan | None = None):
@@ -97,6 +99,31 @@ class HistoryWorker(QThread):
                             "pages": pages, "date": self.day,
                         })
                         return
+                    runner = AutoBetRunner(self.site, self.auth)
+                    if (getattr(latest_settings, "profit_limit", None) is not None
+                            or getattr(latest_settings, "loss_limit", None) is not None):
+                        try:
+                            value = runner.client.today_profit()
+                            halted, reason = save_profit_snapshot(value)
+                        except (OSError, ValueError) as exc:
+                            self.profit_failed.emit(
+                                "自动盈亏检查失败，本期停止投注：" + safe_message(
+                                    str(exc), tuple(str(v) for v in self.auth.values())
+                                )
+                            )
+                            self.succeeded.emit({
+                                "rows": rows, "report": report,
+                                "pages": pages, "date": self.day,
+                            })
+                            return
+                        self.profit_checked.emit(value, halted, reason)
+                        if halted:
+                            self.progress.emit(reason + "，今日自动投注已停止")
+                            self.succeeded.emit({
+                                "rows": rows, "report": report,
+                                "pages": pages, "date": self.day,
+                            })
+                            return
                     targets = import_targets(Path(self.workbook))
                     current_issue = max(
                         (str(row["issue"]) for row in rows), key=int, default=None
@@ -108,7 +135,7 @@ class HistoryWorker(QThread):
                                    targets.tail, targets.zodiac,
                                    self.bet_plan.start_offset,
                                    self.bet_plan.point_schedule)
-                    outcome = AutoBetRunner(self.site, self.auth).run_once(plan, trigger_issue)
+                    outcome = runner.run_once(plan, trigger_issue)
                     if outcome is not None:
                         numbers = "、".join(number for number, _ in outcome.bets)
                         amounts = "、".join(str(amount) for _, amount in outcome.bets)
