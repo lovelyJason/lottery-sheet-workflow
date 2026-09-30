@@ -195,7 +195,9 @@ class WorkbookSelectionTests(unittest.TestCase):
         history_config.save_config("", "", use_copy=False)
         self.assertEqual(history_config.load_config()["workbook"], "")
         self.assertFalse(history_config.load_config()["use_copy"])
-        history_config.CONFIG.write_text('{"workbook": "legacy_已完成.xlsx"}')
+        history_config.CONFIG.write_text(
+            '{"workbook": "legacy_已完成.xlsx"}', encoding="utf-8"
+        )
         legacy = history_config.load_config()
         self.assertTrue(legacy["use_copy"])
         self.assertEqual(legacy["workbook"], "legacy_已完成.xlsx")
