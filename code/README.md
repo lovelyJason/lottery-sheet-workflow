@@ -58,4 +58,4 @@ uv run python main.py
 cd code && uv run python main.py --dev
 ```
 
-`uv run python main.py` 和 `./run.sh` 同样会自动显示。窗口右下方会出现红色悬浮“调试”按钮，可以分别测试五秒双音警报、系统通知、全部告警或停止警报。macOS 使用通知中心，Windows 使用右下角系统通知。打包后的正式程序不会创建该按钮；源码调试时如需强制隐藏，可使用 `LOTTERY_DEV_MODE=0 ./run.sh`。
+`uv run python main.py` 和 `./run.sh` 同样会自动显示。窗口右下方会出现红色悬浮“调试”按钮，可以分别测试提示音（连续播放三遍）、系统通知、全部告警或停止警报。macOS 使用通知中心，Windows 使用右下角系统通知。打包后的正式程序不会创建该按钮；源码调试时如需强制隐藏，可使用 `LOTTERY_DEV_MODE=0 ./run.sh`。

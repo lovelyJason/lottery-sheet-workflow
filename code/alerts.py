@@ -48,7 +48,7 @@ class SystemAlerter(QObject):
             self.tray.showMessage(str(title), text, QSystemTrayIcon.Warning, 15_000)
 
     def alarm(self) -> None:
-        """Play a five-second two-tone siren asynchronously."""
+        """Play the configured alert clip, pre-rendered as three repetitions."""
         self.stop_alarm()
         if self.alarm_file.is_file() and sys.platform == "darwin":
             try:
@@ -56,7 +56,7 @@ class SystemAlerter(QObject):
                     ["/usr/bin/afplay", str(self.alarm_file)],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
-                QTimer.singleShot(5_500, self._reap_alarm)
+                QTimer.singleShot(13_000, self._reap_alarm)
                 return
             except OSError:
                 pass
