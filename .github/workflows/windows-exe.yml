@@ -29,6 +29,12 @@ jobs:
           python wincompat\vps_shim.py
           if errorlevel 1 exit /b 1
 
+      - name: Run regression tests on Windows
+        working-directory: code
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -W error::ResourceWarning -m unittest discover -s tests
+
       - name: Build exe
         working-directory: code
         run: pyinstaller --noconfirm --clean app.spec

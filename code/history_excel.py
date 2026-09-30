@@ -257,7 +257,10 @@ class WorkbookSync:
             with tempfile.NamedTemporaryFile(dir=self.path.parent, prefix=".history-", suffix=".xlsx", delete=False) as stream:
                 temporary = Path(stream.name)
             self.workbook.save(temporary)
-            with temporary.open("rb") as stream:
+            # Windows implements os.fsync with FlushFileBuffers/_commit, which
+            # requires a writable descriptor. Opening this as "rb" works on
+            # POSIX but deterministically fails in the packaged Windows app.
+            with temporary.open("rb+") as stream:
                 os.fsync(stream.fileno())
             self._check_unchanged()
             os.replace(temporary, self.path)
@@ -265,7 +268,12 @@ class WorkbookSync:
         except WorkbookError:
             raise
         except OSError as exc:
-            raise WorkbookError("保存表格失败，请关闭 Excel 并检查文件权限和磁盘空间。") from exc
+            code = getattr(exc, "winerror", None) or exc.errno
+            reason = exc.strerror or type(exc).__name__
+            detail = f"（系统错误 {code}：{reason}）" if code else f"（{reason}）"
+            raise WorkbookError(
+                f"保存表格失败{detail}。请检查文件权限和磁盘空间；如果表格已打开，请先关闭。"
+            ) from exc
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)

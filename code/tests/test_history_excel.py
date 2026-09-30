@@ -95,6 +95,24 @@ class ExcelTests(unittest.TestCase):
             with self.assertRaises(WorkbookError):s.apply([record(115054996)])
         self.assertEqual(self.path.read_bytes(),raw)
         self.assertFalse(list(self.path.parent.glob(".history-*")))
+    def test_windows_flush_uses_a_writable_temporary_descriptor(self):
+        """Windows FlushFileBuffers rejects a descriptor opened read-only."""
+        self.make([[115054996,None]]);s=self.sync(self.path)
+        real_open = Path.open
+        modes = {}
+        def tracked_open(path, mode="r", *args, **kwargs):
+            stream = real_open(path, mode, *args, **kwargs)
+            modes[stream.fileno()] = mode
+            return stream
+        def windows_fsync(fd):
+            mode = modes.get(fd, "")
+            if not any(marker in mode for marker in ("+", "w", "a", "x")):
+                raise OSError(22, "Invalid argument")
+        with patch("pathlib.Path.open", new=tracked_open), \
+             patch("history_excel.os.fsync", side_effect=windows_fsync):
+            report = s.apply([record(115054996)])
+        self.assertEqual(report.written,1)
+        self.assertEqual(self.read(self.path),[33])
     def test_excel_lock(self):
         self.make([[115054996,None]])
         self.path.with_name("~$"+self.path.name).touch()
