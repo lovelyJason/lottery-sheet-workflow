@@ -86,6 +86,10 @@ class WorkerTests(unittest.TestCase):
         self.assertIn("本期合计25积分", bet_logs[0])
         submitted_plan = runner.return_value.run_once.call_args.args[0]
         self.assertEqual(submitted_plan.start_offset, 4)
+        self.assertEqual(
+            runner.return_value.run_once.call_args.kwargs["latest_result_issue"],
+            "115054996",
+        )
 
     def test_auto_bet_business_error_does_not_erase_excel_success(self):
         worker = HistoryWorker("https://web.example.test", {}, str(self.path), "2026-09-28",
@@ -108,6 +112,31 @@ class WorkerTests(unittest.TestCase):
         self.assertTrue(successes)
         self.assertFalse(history_errors)
         self.assertEqual(bet_errors, ["自动投注失败：积分不足,投注失败"])
+
+    def test_empty_daily_sheet_waits_after_sync_instead_of_failing_bet(self):
+        worker = HistoryWorker(
+            "https://web.example.test", {}, str(self.path), "2026-10-01",
+            bet_plan=BetPlan(3, 40, None, None, 1, (40, 40, 40)),
+        )
+        successes, progress, bet_errors = [], [], []
+        worker.succeeded.connect(successes.append)
+        worker.progress.connect(progress.append)
+        worker.bet_failed.connect(bet_errors.append)
+        with patch("history_worker.HistoryClient") as history, \
+                patch("history_worker.AutoBetRunner") as runner:
+            # A valid result exists, but it precedes the first issue in this
+            # freshly cleared daily sheet, so no B cell can be filled yet.
+            history.return_value.fetch_page.side_effect = [[
+                {"issue": "115055419", "special_code": 16},
+            ], []]
+            worker.run()
+
+        self.assertTrue(successes)
+        self.assertFalse(bet_errors)
+        self.assertIn(
+            "表格暂无已补录特码，等待开奖结果后再判断自动投注", progress
+        )
+        runner.return_value.run_once.assert_not_called()
 
     def test_profit_halt_is_rechecked_before_betting(self):
         worker = HistoryWorker("https://web.example.test", {}, str(self.path), "2026-09-28",

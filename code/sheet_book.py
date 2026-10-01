@@ -26,6 +26,10 @@ class SheetTargets:
     source: str
 
 
+class NoSheetResults(ValueError):
+    """The selected daily sheet is valid but has no completed draw yet."""
+
+
 def load_targets() -> SheetTargets | None:
     if not SHEET_FILE.exists():
         return None
@@ -59,11 +63,15 @@ def import_targets(path: Path) -> SheetTargets:
         workbook = load_workbook(path, data_only=False)
     except (OSError, InvalidFileException, zipfile.BadZipFile, KeyError, ValueError) as exc:
         raise ValueError("请选择 .xlsx 文件") from exc
-    worksheet = workbook["记录"] if "记录" in workbook.sheetnames else workbook[workbook.sheetnames[0]]
-    tail, zodiac = _h1_i1(worksheet)
-    if tail is None and zodiac is None:
-        raise ValueError("表里还没有特码，算不出 H1 和 I1。")
-    return SheetTargets(tail=tail, zodiac=zodiac, source=path.name)
+    try:
+        worksheet = (workbook["记录"] if "记录" in workbook.sheetnames
+                     else workbook[workbook.sheetnames[0]])
+        tail, zodiac = _h1_i1(worksheet)
+        if tail is None and zodiac is None:
+            raise NoSheetResults("表里还没有特码，算不出 H1 和 I1。")
+        return SheetTargets(tail=tail, zodiac=zodiac, source=path.name)
+    finally:
+        workbook.close()
 
 
 def zero_trigger_issue(path: Path, written_issues: tuple[str, ...],

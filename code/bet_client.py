@@ -253,12 +253,17 @@ class AutoBetRunner:
         self.client = client or BetClient(site, auth)
         self.state_file = Path(state_file)
 
-    def run_once(self, plan: BetPlan, trigger_issue: str | None = None) -> BetOutcome | None:
+    def run_once(self, plan: BetPlan, trigger_issue: str | None,
+                 latest_result_issue: str | None) -> BetOutcome | None:
         fingerprint = _fingerprint(self.site, plan)
         state = _read_state(self.state_file)
+        # The persisted issue reservation ledger is independent of one trigger
+        # campaign.  A newly hit zero changes the campaign and rules, but must
+        # never make an already-submitted open issue eligible again.
+        attempted = list(state.get("attempted", []))
         if state.get("fingerprint") != fingerprint:
             state = {"fingerprint": fingerprint, "trigger_issue": None,
-                     "completed": 0, "attempted": []}
+                     "completed": 0, "attempted": attempted}
         completed = state["completed"]
         active = state.get("trigger_issue") and completed < plan.count
         # Every newly observed zero is authoritative, even while an older
@@ -266,7 +271,7 @@ class AutoBetRunner:
         if (trigger_issue
                 and str(trigger_issue) != str(state.get("trigger_issue") or "")):
             state = {"fingerprint": fingerprint, "trigger_issue": str(trigger_issue),
-                     "completed": 0, "attempted": []}
+                     "completed": 0, "attempted": attempted}
             active = True
             # Delayed campaigns must survive a restart before their first bet slot.
             _write_state(self.state_file, state)
@@ -274,6 +279,14 @@ class AutoBetRunner:
             return None
         game_id = self.client.game_id()
         issue, open_time = self.client.next_issue(game_id)
+        if latest_result_issue is None:
+            return None
+        # issueData can expose the new betting issue before openResultList has
+        # published the immediately preceding draw.  Betting while that gap is
+        # present uses the old rule and can later overlap a restarted campaign.
+        # Wait until history/Excel has caught up to exactly the previous issue.
+        if issue_distance(str(latest_result_issue), issue) != 1:
+            return None
         slot = issue_distance(str(state["trigger_issue"]), issue)
         if slot < plan.start_offset:
             return None

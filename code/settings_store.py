@@ -125,12 +125,38 @@ def save_bets(count_raw: str, points_raw: str | list[str] | tuple[str, ...], aut
     data["profit_halt_date"] = site_day() if halted else ""
     data["profit_halt_reason"] = reason
     _write(data)
-    # Saving the dialog explicitly starts a fresh run, even when values are unchanged.
-    try:
-        (APP_DIR / "bet_state.json").unlink()
-    except OSError:
-        pass
+    # Saving the dialog explicitly starts a fresh campaign, even when values
+    # are unchanged.  Keep the cross-campaign issue reservations so saving or
+    # changing rules cannot make the currently open issue eligible twice.
+    _restart_bet_campaign()
     return count, schedule
+
+
+def _restart_bet_campaign() -> None:
+    path = APP_DIR / "bet_state.json"
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(state, dict) or not isinstance(state.get("attempted"), list):
+        return
+    restarted = {
+        "fingerprint": "",
+        "trigger_issue": None,
+        "completed": 0,
+        "attempted": state["attempted"][-500:],
+    }
+    temp = path.with_suffix(".tmp")
+    try:
+        temp.write_text(json.dumps(restarted, ensure_ascii=False), encoding="utf-8")
+        _restrict(temp)
+        temp.replace(path)
+        _restrict(path)
+    except OSError:
+        try:
+            temp.unlink()
+        except OSError:
+            pass
 
 
 def save_profit_snapshot(value: float) -> tuple[bool, str]:

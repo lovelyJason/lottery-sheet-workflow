@@ -20,7 +20,6 @@ from history_excel import WorkbookSync
 from workbook_selection import select_workbook
 from history_worker import HistoryWorker
 from settings_store import load_settings, site_day
-from sheet_book import import_targets
 from ui_common import hug
 
 class HistoryPanel(QFrame):
@@ -262,9 +261,8 @@ class HistoryPanel(QFrame):
                 if (settings.bet_count is None
                         or len(settings.bet_points_schedule) != settings.bet_count):
                     raise ValueError("自动投注已开启，请先保存每一期的投注积分")
-                targets = import_targets(Path(path))
                 bet_plan = BetPlan(settings.bet_count, settings.bet_points,
-                                   targets.tail, targets.zodiac,
+                                   None, None,
                                    settings.bet_start_offset,
                                    settings.bet_points_schedule)
             elif settings.auto_bet:

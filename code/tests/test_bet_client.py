@@ -51,61 +51,64 @@ class RunnerTests(unittest.TestCase):
 
     def test_same_issue_is_at_most_once(self):
         runner = AutoBetRunner("https://web.example.test", {}, self.state, self.client)
-        outcome = runner.run_once(self.plan, "115055011")
+        outcome = runner.run_once(self.plan, "115055011", "115055011")
         self.assertEqual(outcome.total_points, 120)
         self.assertEqual(outcome.completed, 1)
-        self.assertIsNone(runner.run_once(self.plan))
+        self.assertIsNone(runner.run_once(self.plan, None, "115055011"))
         self.client.submit.assert_called_once()
 
     def test_issue_is_reserved_even_when_submit_fails(self):
         self.client.submit.side_effect = BetError("积分不足,投注失败")
         runner = AutoBetRunner("https://web.example.test", {}, self.state, self.client)
         with self.assertRaisesRegex(BetError, "积分不足"):
-            runner.run_once(self.plan, "115055011")
+            runner.run_once(self.plan, "115055011", "115055011")
         self.client.submit.reset_mock()
         self.client.submit.side_effect = None
-        self.assertIsNone(runner.run_once(self.plan))
+        self.assertIsNone(runner.run_once(self.plan, None, "115055011"))
         self.client.submit.assert_not_called()
 
     def test_no_zero_trigger_means_no_bet(self):
         runner = AutoBetRunner("https://web.example.test", {}, self.state, self.client)
-        self.assertIsNone(runner.run_once(self.plan))
+        self.assertIsNone(runner.run_once(self.plan, None, "115055011"))
         self.client.game_id.assert_not_called()
 
     def test_exactly_n_consecutive_slots_then_waits_for_next_zero(self):
         runner = AutoBetRunner("https://web.example.test", {}, self.state, self.client)
         for index, issue in enumerate(("115055012", "115055013"), 1):
             self.client.next_issue.return_value = (issue, 1790610600 + index * 300)
-            outcome = runner.run_once(self.plan, "115055011" if index == 1 else None)
+            outcome = runner.run_once(
+                self.plan, "115055011" if index == 1 else None,
+                str(int(issue) - 1),
+            )
             self.assertEqual(outcome.completed, index)
         self.client.next_issue.return_value = ("115055014", 1790611500)
-        self.assertIsNone(runner.run_once(self.plan, "115055011"))
+        self.assertIsNone(runner.run_once(self.plan, "115055011", "115055013"))
         self.assertEqual(self.client.submit.call_count, 2)
 
     def test_rejected_period_still_consumes_one_of_n_slots(self):
         self.client.submit.side_effect = BetError("积分不足,投注失败")
         runner = AutoBetRunner("https://web.example.test", {}, self.state, self.client)
         with self.assertRaises(BetError):
-            runner.run_once(self.plan, "115055011")
+            runner.run_once(self.plan, "115055011", "115055011")
         self.client.submit.side_effect = None
         self.client.next_issue.return_value = ("115055013", 1790610900)
-        outcome = runner.run_once(self.plan)
+        outcome = runner.run_once(self.plan, None, "115055012")
         self.assertEqual(outcome.completed, 2)
         self.client.next_issue.return_value = ("115055014", 1790611200)
-        self.assertIsNone(runner.run_once(self.plan))
+        self.assertIsNone(runner.run_once(self.plan, None, "115055013"))
 
     def test_start_offset_selects_the_requested_issue_window(self):
         plan = BetPlan(3, 3, "2", "猴", start_offset=2)
         runner = AutoBetRunner("https://web.example.test", {}, self.state, self.client)
         self.client.next_issue.return_value = ("115055012", 1790610600)
-        self.assertIsNone(runner.run_once(plan, "115055011"))
+        self.assertIsNone(runner.run_once(plan, "115055011", "115055011"))
         self.client.submit.assert_not_called()
         for expected, issue in enumerate(("115055013", "115055014", "115055015"), 1):
             self.client.next_issue.return_value = (issue, 1790610600 + expected * 300)
-            outcome = runner.run_once(plan)
+            outcome = runner.run_once(plan, None, str(int(issue) - 1))
             self.assertEqual(outcome.completed, expected)
         self.client.next_issue.return_value = ("115055016", 1790611800)
-        self.assertIsNone(runner.run_once(plan))
+        self.assertIsNone(runner.run_once(plan, None, "115055015"))
         self.assertEqual(self.client.submit.call_count, 3)
 
     def test_issue_distance_handles_999_to_001_boundary(self):
@@ -116,21 +119,72 @@ class RunnerTests(unittest.TestCase):
         plan = BetPlan(6, 3, "2", "猴", start_offset=2)  # delay one issue
         runner = AutoBetRunner("https://web.example.test", {}, self.state, self.client)
         self.client.next_issue.return_value = ("115055120", 1790610600)
-        self.assertIsNone(runner.run_once(plan, "115055119"))
+        self.assertIsNone(runner.run_once(plan, "115055119", "115055119"))
         for issue in ("115055121", "115055122", "115055123"):
             self.client.next_issue.return_value = (issue, 1790610600)
-            self.assertIsNotNone(runner.run_once(plan))
+            self.assertIsNotNone(runner.run_once(plan, None, str(int(issue) - 1)))
         # Result 123 is another zero: old planned 124 is cancelled, and the
         # new delay skips 124 before the new campaign starts at 125.
         self.client.next_issue.return_value = ("115055124", 1790610600)
-        self.assertIsNone(runner.run_once(plan, "115055123"))
+        self.assertIsNone(runner.run_once(plan, "115055123", "115055123"))
         self.client.next_issue.return_value = ("115055125", 1790610600)
-        outcome = runner.run_once(plan)
+        outcome = runner.run_once(plan, None, "115055124")
         self.assertEqual(outcome.completed, 1)
         submitted_issues = [
             call.args[0] for call in self.client.submit.call_args_list
         ]
         self.assertEqual(len(submitted_issues), 4)
+
+    def test_new_zero_cannot_bet_an_issue_already_used_by_previous_campaign(self):
+        old_plan = BetPlan(3, 40, "6", "蛇", 1, (40, 40, 40))
+        new_plan = BetPlan(3, 40, "9", "蛇", 1, (40, 40, 40))
+        runner = AutoBetRunner("https://web.example.test", {}, self.state, self.client)
+
+        self.client.next_issue.return_value = ("115055402", 1790610600)
+        self.assertIsNotNone(runner.run_once(old_plan, "115055401", "115055401"))
+
+        # The betting endpoint advances before result 402 reaches history.
+        self.client.next_issue.return_value = ("115055403", 1790610900)
+        self.assertIsNotNone(runner.run_once(old_plan, None, "115055402"))
+
+        # Result 402 then arrives as another zero and starts a new campaign.
+        # Issue 403 was already submitted by the old campaign and must remain
+        # globally reserved when the campaign/rule fingerprint changes.
+        self.client.next_issue.return_value = ("115055403", 1790610900)
+        self.assertIsNone(runner.run_once(new_plan, "115055402", "115055402"))
+        self.assertEqual(self.client.submit.call_count, 2)
+
+    def test_stale_history_blocks_old_campaign_from_betting_ahead(self):
+        runner = AutoBetRunner("https://web.example.test", {}, self.state, self.client)
+        self.client.next_issue.return_value = ("115055403", 1790610900)
+
+        outcome = runner.run_once(
+            self.plan, "115055401", latest_result_issue="115055401"
+        )
+
+        self.assertIsNone(outcome)
+        self.client.build_payload.assert_not_called()
+        self.client.submit.assert_not_called()
+
+    def test_consecutive_zero_waits_for_result_then_uses_only_new_campaign(self):
+        old_plan = BetPlan(3, 40, "6", "蛇", 1, (40, 40, 40))
+        new_plan = BetPlan(3, 40, "9", "蛇", 1, (40, 40, 40))
+        runner = AutoBetRunner("https://web.example.test", {}, self.state, self.client)
+
+        self.client.next_issue.return_value = ("115055402", 1790610600)
+        first = runner.run_once(old_plan, "115055401", "115055401")
+
+        # Betting has advanced to 403 while history still ends at 401.
+        self.client.next_issue.return_value = ("115055403", 1790610900)
+        self.assertIsNone(runner.run_once(old_plan, None, "115055401"))
+
+        # Once result 402 arrives and is another zero, only the restarted
+        # campaign is allowed to submit the still-open issue 403.
+        restarted = runner.run_once(new_plan, "115055402", "115055402")
+
+        self.assertEqual((first.issue, restarted.issue), ("115055402", "115055403"))
+        self.assertEqual(restarted.completed, 1)
+        self.assertEqual(self.client.submit.call_count, 2)
 
     def test_each_period_uses_its_own_points_schedule(self):
         plan = BetPlan(3, 1, "2", "猴", 1, (1, 2, 5))
@@ -138,7 +192,10 @@ class RunnerTests(unittest.TestCase):
         observed = []
         for index, issue in enumerate(("115055120", "115055121", "115055122"), 1):
             self.client.next_issue.return_value = (issue, 1790610600)
-            outcome = runner.run_once(plan, "115055119" if index == 1 else None)
+            outcome = runner.run_once(
+                plan, "115055119" if index == 1 else None,
+                str(int(issue) - 1),
+            )
             used_plan = self.client.build_payload.call_args.args[1]
             observed.append((used_plan.points, outcome.points, outcome.total_points))
         self.assertEqual(observed, [(1, 1, 40), (2, 2, 80), (5, 5, 200)])
@@ -187,7 +244,8 @@ class ClientContractTests(unittest.TestCase):
             client = BetClient("https://web.example.test", auth, opener)
             outcome = AutoBetRunner("https://web.example.test", auth,
                                     Path(temporary) / "state.json", client).run_once(
-                                        BetPlan(1, 2, "2", "猴"), "115055011")
+                                        BetPlan(1, 2, "2", "猴"),
+                                        "115055011", "115055011")
         self.assertEqual(outcome.selected, 40)
         posted = json.loads(opener.requests[-1].data)
         self.assertEqual(outcome.bets, tuple(

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -57,6 +58,20 @@ class SettingsStoreTests(unittest.TestCase):
     def test_every_bet_period_requires_its_own_points(self):
         with self.assertRaisesRegex(ValueError, "分别填写"):
             settings_store.save_bets("3", ["1", "2"], True, "0")
+
+    def test_saving_bets_restarts_campaign_without_forgetting_reserved_issues(self):
+        state = self.folder / "bet_state.json"
+        state.write_text(json.dumps({
+            "fingerprint": "old", "trigger_issue": "115055402",
+            "completed": 1, "attempted": ["115055403"],
+        }), encoding="utf-8")
+
+        settings_store.save_bets("3", ["1", "2", "3"], True, "0")
+
+        saved = json.loads(state.read_text(encoding="utf-8"))
+        self.assertEqual(saved["attempted"], ["115055403"])
+        self.assertIsNone(saved["trigger_issue"])
+        self.assertEqual(saved["completed"], 0)
 
     def test_history_and_profit_intervals_are_saved_separately(self):
         self.assertEqual(settings_store.save_poll_intervals("20", "45"), (20, 45))

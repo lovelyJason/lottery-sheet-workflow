@@ -231,6 +231,26 @@ class HistoryGuiTests(unittest.TestCase):
         self.assertFalse(self.panel.busy)
         self.assertIn("轮询间隔", self.panel.note.text())
 
+    def test_empty_daily_sheet_is_fetched_before_bet_targets_are_calculated(self):
+        settings = Settings(
+            "https://web.example.test", 3, 40, 60,
+            auto_bet=True, bet_start_offset=1,
+            bet_points_schedule=(40, 40, 40),
+        )
+        with patch("history_panel.load_settings", return_value=settings), \
+                patch("history_panel.HistoryWorker") as worker:
+            self.panel._launch()
+
+        worker.assert_called_once()
+        plan = worker.call_args.args[5]
+        self.assertEqual(plan.point_schedule, (40, 40, 40))
+        self.assertIsNone(plan.tail)
+        self.assertIsNone(plan.zodiac)
+        worker.return_value.start.assert_called_once()
+        self.assertNotIn("H1", self.panel.note.text())
+        self.panel.worker = None
+        self.panel._controls()
+
     def test_run_settings_refresh_the_home_interval(self):
         settings = Settings("https://web.example.test", None, None, 17,
                             profit_poll_interval=23)

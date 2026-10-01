@@ -8,7 +8,7 @@ from PySide6.QtCore import QThread, Signal
 from bet_client import AutoBetRunner, BetPlan
 from history_client import HistoryClient, HistoryError, safe_message
 from history_excel import WorkbookSync
-from sheet_book import import_targets, zero_trigger_issue
+from sheet_book import NoSheetResults, import_targets, zero_trigger_issue
 from settings_store import load_settings, save_profit_snapshot, site_day
 
 
@@ -124,7 +124,21 @@ class HistoryWorker(QThread):
                                 "pages": pages, "date": self.day,
                             })
                             return
-                    targets = import_targets(Path(self.workbook))
+                    try:
+                        targets = import_targets(Path(self.workbook))
+                    except NoSheetResults:
+                        # A freshly cleared daily template is expected to be
+                        # empty before its first matching result is published.
+                        # History sync has already run; wait for a later poll
+                        # instead of treating the valid empty sheet as a fault.
+                        self.progress.emit(
+                            "表格暂无已补录特码，等待开奖结果后再判断自动投注"
+                        )
+                        self.succeeded.emit({
+                            "rows": rows, "report": report,
+                            "pages": pages, "date": self.day,
+                        })
+                        return
                     current_issue = max(
                         (str(row["issue"]) for row in rows), key=int, default=None
                     )
@@ -135,7 +149,9 @@ class HistoryWorker(QThread):
                                    targets.tail, targets.zodiac,
                                    self.bet_plan.start_offset,
                                    self.bet_plan.point_schedule)
-                    outcome = runner.run_once(plan, trigger_issue)
+                    outcome = runner.run_once(
+                        plan, trigger_issue, latest_result_issue=current_issue
+                    )
                     if outcome is not None:
                         numbers = "、".join(number for number, _ in outcome.bets)
                         amounts = "、".join(str(amount) for _, amount in outcome.bets)
