@@ -3,11 +3,11 @@ import unittest
 import io
 import json
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from bet_client import (
-    AutoBetRunner, BetClient, BetError, BetPlan, issue_distance, selected_numbers,
-    zodiac_numbers,
+    AutoBetRunner, BetClient, BetError, BetNetworkError, BetPlan, issue_distance,
+    selected_numbers, zodiac_numbers,
 )
 
 
@@ -202,6 +202,46 @@ class RunnerTests(unittest.TestCase):
 
 
 class ClientContractTests(unittest.TestCase):
+    def test_today_profit_retries_network_failure_five_times_then_succeeds(self):
+        client = BetClient(
+            "https://web.example.test", {"token": "TOKEN", "uuid": "UUID"}
+        )
+        failures = [BetNetworkError("timeout")] * 5
+        with patch.object(
+                client, "_today_profit_once", side_effect=[*failures, -1177.0]
+        ) as query, patch("bet_client.sleep") as sleep:
+            self.assertEqual(client.today_profit(), -1177.0)
+
+        self.assertEqual(query.call_count, 6)
+        self.assertEqual(sleep.call_count, 5)
+
+    def test_today_profit_does_not_retry_non_network_error(self):
+        client = BetClient(
+            "https://web.example.test", {"token": "TOKEN", "uuid": "UUID"}
+        )
+        with patch.object(
+                client, "_today_profit_once", side_effect=BetError("登录态失效")
+        ) as query, patch("bet_client.sleep") as sleep, self.assertRaisesRegex(
+                BetError, "登录态失效"):
+            client.today_profit()
+
+        query.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_today_profit_reports_when_all_five_retries_fail(self):
+        client = BetClient(
+            "https://web.example.test", {"token": "TOKEN", "uuid": "UUID"}
+        )
+        with patch.object(
+                client, "_today_profit_once",
+                side_effect=BetNetworkError("timeout"),
+        ) as query, patch("bet_client.sleep") as sleep, self.assertRaisesRegex(
+                BetNetworkError, "已重试5次"):
+            client.today_profit()
+
+        self.assertEqual(query.call_count, 6)
+        self.assertEqual(sleep.call_count, 5)
+
     def test_today_profit_uses_same_issue_data_total_win_as_webpage(self):
         opener = Opener(
             {"domain": "https://api.example.test"},

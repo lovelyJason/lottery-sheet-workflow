@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from time import sleep
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -14,6 +15,8 @@ from china_time import CHINA_TIME
 from history_client import BROWSER, SUCCESS_CODES, origin, safe_message
 
 BET_STATE_FILE = APP_DIR / "bet_state.json"
+PROFIT_NETWORK_RETRIES = 5
+PROFIT_RETRY_DELAY_SECONDS = 1
 ZODIACS = ("鼠", "牛", "虎", "兔", "龙", "蛇", "马", "羊", "猴", "鸡", "狗", "猪")
 
 # Lunar-year boundaries from the site's current frontend bundle.
@@ -34,6 +37,10 @@ LUNAR_NEW_YEAR = {
 
 class BetError(ValueError):
     pass
+
+
+class BetNetworkError(BetError):
+    """A transient transport failure that is safe to retry for GET-only flows."""
 
 
 @dataclass(frozen=True)
@@ -147,7 +154,7 @@ class BetClient:
                 raise BetError("登录态失效或投注接口访问受限") from None
             raise BetError(f"投注接口 HTTP {exc.code}") from None
         except (URLError, TimeoutError, OSError):
-            raise BetError("投注请求网络连接失败或超时；本期不自动重试") from None
+            raise BetNetworkError("投注请求网络连接失败或超时；本期不自动重试") from None
         except (json.JSONDecodeError, UnicodeError):
             raise BetError("投注接口未返回有效 JSON") from None
         if not isinstance(body, dict):
@@ -227,6 +234,18 @@ class BetClient:
 
     def today_profit(self) -> float:
         """Return the same live value rendered by the site's “今日结果” label."""
+        for retry in range(PROFIT_NETWORK_RETRIES + 1):
+            try:
+                return self._today_profit_once()
+            except BetNetworkError:
+                if retry == PROFIT_NETWORK_RETRIES:
+                    raise BetNetworkError(
+                        f"盈亏查询网络连接失败或超时，已重试{PROFIT_NETWORK_RETRIES}次"
+                    ) from None
+                sleep(PROFIT_RETRY_DELAY_SECONDS)
+        raise AssertionError("unreachable")
+
+    def _today_profit_once(self) -> float:
         game_id = self.game_id()
         body = self._api(f"/api/v1/member/issueData/{game_id}")
         data = body.get("data")
