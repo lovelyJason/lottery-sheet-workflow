@@ -66,14 +66,16 @@ class WorkerTests(unittest.TestCase):
         bet_logs = []
         worker.bet_succeeded.connect(bet_logs.append)
         with patch("history_worker.HistoryClient") as history, \
-             patch("history_worker.import_targets") as targets, \
-             patch("history_worker.zero_trigger_issue", return_value="115055011"), \
+             patch("history_worker.evaluate_bet_rule") as rule, \
              patch("history_worker.AutoBetRunner") as runner:
             history.return_value.fetch_page.return_value = [
                 {"issue": "115054996", "special_code": 33},
                 {"issue": "115054980", "special_code": 24},
             ]
-            targets.return_value.tail, targets.return_value.zodiac = "2", "猴"
+            rule.return_value = SimpleNamespace(
+                tail="2", zodiac="猴", trigger_issue="115055011",
+                rule_key="play1", label="玩法一", exclusion_text="2尾/猴",
+            )
             runner.return_value.run_once.return_value = BetOutcome(
                 "115055012", 3, 25, 1, 2, "投注成功", 0,
                 (("1", 2), ("5", 3), ("36", 20))
@@ -99,14 +101,16 @@ class WorkerTests(unittest.TestCase):
         worker.bet_failed.connect(bet_errors.append)
         worker.failed.connect(history_errors.append)
         with patch("history_worker.HistoryClient") as history, \
-             patch("history_worker.import_targets") as targets, \
-             patch("history_worker.zero_trigger_issue", return_value="115055011"), \
+             patch("history_worker.evaluate_bet_rule") as rule, \
              patch("history_worker.AutoBetRunner") as runner:
             history.return_value.fetch_page.return_value = [
                 {"issue": "115054996", "special_code": 33},
                 {"issue": "115054980", "special_code": 24},
             ]
-            targets.return_value.tail, targets.return_value.zodiac = "2", "猴"
+            rule.return_value = SimpleNamespace(
+                tail="2", zodiac="猴", trigger_issue="115055011",
+                rule_key="play1", label="玩法一", exclusion_text="2尾/猴",
+            )
             runner.return_value.run_once.side_effect = BetError("积分不足,投注失败")
             worker.run()
         self.assertTrue(successes)

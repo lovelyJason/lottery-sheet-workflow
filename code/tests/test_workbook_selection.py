@@ -40,6 +40,10 @@ class WorkbookSelectionTests(unittest.TestCase):
         wb.close()
         self.original = self.source.read_bytes()
         self.stack.enter_context(patch.object(history_config, "CONFIG", self.folder / "history.json"))
+        self.stack.enter_context(patch(
+            "history_panel.load_settings",
+            return_value=Settings("https://web.example.test", None, None, 30),
+        ))
         self.stack.enter_context(patch("app_log.info"))
         self.stack.enter_context(patch("app_log.error"))
         self.dialog = SheetPanel()

@@ -144,10 +144,19 @@ def apply_d_formulas(worksheet, first: int = 3, last: int = 498) -> None:
         worksheet.cell(row, 4).value = d_formula(row)
 
 
-def write_template(path: Path) -> None:
-    base = Path(__file__).resolve().parent / "assets" / "sheet-template.xlsx"
+def write_template(path: Path, play_mode: str = "play1") -> None:
+    """Copy the workbook template for the selected play without modifying it."""
+    filenames = {
+        "play1": "sheet-template.xlsx",
+        "play2": "play2-template.xlsx",
+    }
+    try:
+        filename = filenames[play_mode]
+    except KeyError:
+        raise ValueError("玩法无效，无法下载模板") from None
+    base = Path(__file__).resolve().parent / "assets" / filename
     if not base.is_file():
-        raise FileNotFoundError("缺少与源表格式一致的模板文件")
+        raise FileNotFoundError("缺少当前玩法的 Excel 模板文件")
     path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(base, path)
 

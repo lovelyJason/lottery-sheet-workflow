@@ -250,6 +250,8 @@ QTabWidget#configTabs QTabBar::tab:selected {{
 QTabWidget#configTabs QTabBar::tab:hover {{ color: {BLUE}; }}
 QFrame#card {{ border: 1px solid {CONFIG_LINE}; background: {WHITE}; border-radius: 14px; }}
 QFrame#fileSurface {{ background: {CONFIG_SOFT}; border: 1px solid {CONFIG_LINE}; border-radius: 10px; }}
+QFrame#modeSurface {{ background: {CONFIG_SOFT}; border: 1px solid {CONFIG_LINE}; border-radius: 10px; }}
+QFrame#logicSurface {{ background: {WHITE}; border: 1px solid {CONFIG_LINE}; border-radius: 8px; }}
 QLabel#sectionLabel {{ color: {MUTED}; font-size: 12px; font-weight: 600; }}
 QLabel#workbookName {{ font-size: 15px; font-weight: 600; color: {INK}; }}
 QLabel#syncBadge {{
@@ -275,6 +277,14 @@ QCheckBox#copyToggle::indicator {{
     subcontrol-position: left center;
 }}
 QCheckBox {{ color: {INK}; font-size: 13px; spacing: 8px; background: transparent; }}
+QRadioButton#modeChoice {{ color: {INK}; font-size: 13px; spacing: 7px; background: transparent; }}
+QRadioButton#modeChoice::indicator {{ width: 16px; height: 16px; }}
+QRadioButton#modeChoice:disabled {{ color: #9BA8B8; }}
+QToolButton#optionHelp {{
+    background: {CONFIG_BLUE_SOFT}; color: {BLUE}; border: 1px solid #A9D2F5;
+    border-radius: 11px; font-weight: 700; padding: 0;
+}}
+QToolButton#optionHelp:hover {{ background: {BLUE}; color: {WHITE}; border-color: {BLUE}; }}
 QCheckBox::indicator {{ width: 16px; height: 16px; }}
 QCheckBox:disabled {{ color: #9BA8B8; }}
 QDateEdit {{

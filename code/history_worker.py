@@ -6,9 +6,10 @@ from threading import Event
 
 from PySide6.QtCore import QThread, Signal
 from bet_client import AutoBetRunner, BetPlan
+from bet_rules import PLAY1, evaluate_bet_rule
 from history_client import HistoryClient, HistoryError, safe_message
 from history_excel import WorkbookSync
-from sheet_book import NoSheetResults, import_targets, zero_trigger_issue
+from sheet_book import NoSheetResults
 from settings_store import load_settings, save_profit_snapshot, site_day
 
 
@@ -50,10 +51,12 @@ class HistoryWorker(QThread):
     profit_failed = Signal(str)
 
     def __init__(self, site: str, auth: dict, workbook: str, day: str,
-                 parent=None, bet_plan: BetPlan | None = None):
+                 parent=None, bet_plan: BetPlan | None = None,
+                 bet_rule_key: str = PLAY1):
         super().__init__(parent)
         self.site, self.auth, self.workbook, self.day = site, auth, workbook, day
         self.bet_plan = bet_plan
+        self.bet_rule_key = bet_rule_key
         self.cancel = Event()
 
     def run(self) -> None:
@@ -125,7 +128,15 @@ class HistoryWorker(QThread):
                             })
                             return
                     try:
-                        targets = import_targets(Path(self.workbook))
+                        current_issue = max(
+                            (str(row["issue"]) for row in rows), key=int, default=None
+                        )
+                        decision = evaluate_bet_rule(
+                            self.bet_rule_key,
+                            Path(self.workbook),
+                            report.written_issues,
+                            current_issue,
+                        )
                     except NoSheetResults:
                         # A freshly cleared daily template is expected to be
                         # empty before its first matching result is published.
@@ -139,18 +150,13 @@ class HistoryWorker(QThread):
                             "pages": pages, "date": self.day,
                         })
                         return
-                    current_issue = max(
-                        (str(row["issue"]) for row in rows), key=int, default=None
-                    )
-                    trigger_issue = zero_trigger_issue(
-                        Path(self.workbook), report.written_issues, current_issue
-                    )
                     plan = BetPlan(self.bet_plan.count, self.bet_plan.points,
-                                   targets.tail, targets.zodiac,
+                                   decision.tail, decision.zodiac,
                                    self.bet_plan.start_offset,
-                                   self.bet_plan.point_schedule)
+                                   self.bet_plan.point_schedule,
+                                   decision.rule_key)
                     outcome = runner.run_once(
-                        plan, trigger_issue, latest_result_issue=current_issue
+                        plan, decision.trigger_issue, latest_result_issue=current_issue
                     )
                     if outcome is not None:
                         numbers = "、".join(number for number, _ in outcome.bets)
@@ -163,8 +169,8 @@ class HistoryWorker(QThread):
                             f"每个号码{outcome.points}积分。"
                         )
                         self.bet_succeeded.emit(
-                            f"自动投注成功：{detail} 玩法：特码B；"
-                            f"排除{targets.tail or '—'}尾/{targets.zodiac or '—'}；"
+                            f"自动投注成功：{detail} 玩法：特码B；规则：{decision.label}；"
+                            f"排除{decision.exclusion_text}；"
                             f"本期合计{outcome.total_points}积分；"
                             f"进度 {outcome.completed}/{outcome.target_count}（{outcome.message}）"
                         )

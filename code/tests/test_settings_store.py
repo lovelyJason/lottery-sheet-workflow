@@ -90,6 +90,30 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(value.today_profit, -10)
         self.assertEqual(value.profit_halt_date, "2026-09-29")
 
+    def test_play_and_play2_logic_are_persisted_without_losing_other_settings(self):
+        settings_store.save_poll_intervals("20", "45")
+        self.assertEqual(
+            settings_store.save_play_selection("play2", "logic2"),
+            ("play2", "logic2"),
+        )
+        value = settings_store.load_settings()
+        self.assertEqual(value.play_mode, "play2")
+        self.assertEqual(value.play2_logic, "logic2")
+        self.assertEqual(value.poll_interval, 20)
+        self.assertEqual(value.profit_poll_interval, 45)
+
+    def test_missing_or_invalid_play_selection_uses_legacy_defaults(self):
+        settings_store.SETTINGS_FILE.write_text(
+            '{"url":"https://example.test","play_mode":"unknown",'
+            '"play2_logic":42}',
+            encoding="utf-8",
+        )
+        value = settings_store.load_settings()
+        self.assertEqual(value.play_mode, "play1")
+        self.assertEqual(value.play2_logic, "logic1")
+        with self.assertRaisesRegex(ValueError, "玩法"):
+            settings_store.save_play_selection("unknown", "logic1")
+
 
 if __name__ == "__main__":
     unittest.main()

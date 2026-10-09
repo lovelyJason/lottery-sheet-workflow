@@ -49,8 +49,15 @@ class HistoryGuiTests(unittest.TestCase):
         ):
             self.stack.enter_context(patch(target, return_value=result))
         self.stack.enter_context(patch("history_panel.save_config"))
+        self.play_save = self.stack.enter_context(
+            patch("history_panel.save_play_selection", return_value=("play1", "logic1"))
+        )
         self.stack.enter_context(patch("app_log.info"))
         self.stack.enter_context(patch("app_log.error"))
+        panel_sync = Mock()
+        panel_sync.template_kind = "play_one"
+        self.panel_sync = panel_sync
+        self.stack.enter_context(patch("history_panel.WorkbookSync", return_value=panel_sync))
         self.sync = Mock()
         self.sync.needs_more.return_value = False
         self.sync.apply.return_value = SimpleNamespace(written=1, ambiguous=0)
@@ -91,7 +98,9 @@ class HistoryGuiTests(unittest.TestCase):
         for control in (self.window.login_dialog.import_btn, self.window.login_dialog.clear_btn,
                         self.window.login_dialog.url_edit, self.window.login_dialog.url_save,
                         self.window.sheet_panel.template_btn,
-                        self.panel.choose, self.panel.use_copy, self.panel.today):
+                        self.panel.choose, self.panel.use_copy, self.panel.today,
+                        *self.panel.play_buttons.values(),
+                        *self.panel.logic_buttons.values()):
             self.assertEqual(control.isEnabled(), not locked)
         self.assertTrue(self.window.login_btn.isEnabled())
 
@@ -105,7 +114,7 @@ class HistoryGuiTests(unittest.TestCase):
         self.assertEqual(self.window.login_btn.text(), "登录管理")
         self.assertTrue(self.window.login_dialog.isAncestorOf(self.window.login_dialog.url_edit))
         self.assertGreaterEqual(self.window.width(), 760)
-        self.assertGreaterEqual(self.window.height(), 600)
+        self.assertGreaterEqual(self.window.height(), 720)
         buttons = [b.text() for b in self.window.centralWidget().findChildren(QPushButton)]
         self.assertEqual(buttons.count("开始"), 1)
         self.assertNotIn("立即补录", buttons)
@@ -171,6 +180,35 @@ class HistoryGuiTests(unittest.TestCase):
         self.panel.today.setChecked(False)
         self.assertTrue(self.panel.day.isEnabled())
 
+    def test_play_choices_have_individual_help_and_play2_logic_is_persisted(self):
+        self.assertTrue(self.panel.play_buttons["play1"].isChecked())
+        self.assertTrue(self.panel.logic_panel.isHidden())
+        self.assertIn("B 列补录特码", self.panel.play_help["play1"].toolTip())
+        self.assertIn("B 至 G 列", self.panel.play_help["play2"].toolTip())
+        self.assertIn("J 列预警", self.panel.logic_help["logic1"].toolTip())
+        self.assertIn("R1生肖", self.panel.logic_help["logic2"].toolTip())
+
+        self.panel.play_buttons["play2"].click()
+        self.assertFalse(self.panel.logic_panel.isHidden())
+        self.assertIn("B 至 G 列", self.panel.mapping_rule.text())
+        self.play_save.assert_called_with("play2", "logic1")
+        self.panel.logic_buttons["logic2"].click()
+        self.play_save.assert_called_with("play2", "logic2")
+        self.assertIn("玩法二 / 逻辑二", self.panel.note.text())
+
+    def test_play_selection_is_locked_while_task_runs_but_help_stays_available(self):
+        self.panel.start.click()
+        self._until(self.entered.is_set)
+        self.assertFalse(self.panel.play_buttons["play1"].isEnabled())
+        self.assertFalse(self.panel.play_buttons["play2"].isEnabled())
+        self.assertTrue(self.panel.play_help["play1"].isEnabled())
+        self.assertTrue(self.panel.logic_help["logic2"].isEnabled())
+        self.panel.play_buttons["play2"].setChecked(True)
+        self.assertTrue(self.panel.play_buttons["play1"].isChecked())
+        self.release.set()
+        self._until(lambda: not self.panel.busy)
+        self.panel.stop_polling()
+
     def test_close_waits_for_worker_and_cancels_without_write(self):
         self.panel._launch()
         self._until(self.entered.is_set)
@@ -230,6 +268,14 @@ class HistoryGuiTests(unittest.TestCase):
         self.assertFalse(self.panel.running)
         self.assertFalse(self.panel.busy)
         self.assertIn("轮询间隔", self.panel.note.text())
+
+    def test_start_rejects_a_workbook_from_the_other_play(self):
+        self.panel_sync.template_kind = "play_two"
+        with patch("history_panel.HistoryWorker") as worker:
+            self.panel._launch()
+        worker.assert_not_called()
+        self.assertFalse(self.panel.running)
+        self.assertIn("Excel 是玩法二模板", self.panel.note.text())
 
     def test_empty_daily_sheet_is_fetched_before_bet_targets_are_calculated(self):
         settings = Settings(

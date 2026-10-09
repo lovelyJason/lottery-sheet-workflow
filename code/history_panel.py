@@ -7,21 +7,24 @@ from pathlib import Path
 from PySide6.QtCore import QDate, QTimer, QUrl, Signal, Qt, QSignalBlocker
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox, QDateEdit, QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QMessageBox, QPushButton, QSizePolicy, QVBoxLayout,
+    QButtonGroup, QCheckBox, QDateEdit, QFileDialog, QFrame, QHBoxLayout, QLabel,
+    QMessageBox, QPushButton, QRadioButton, QSizePolicy, QToolButton, QVBoxLayout,
 )
 
 import app_log
 from auth_storage import load
 from bet_client import BetPlan
+from bet_rules import rule_key
 from history_client import results_url
 from history_config import load_config, save_config
 from history_excel import WorkbookSync
 from workbook_selection import select_workbook
 from history_worker import HistoryWorker
-from settings_store import load_settings, site_day
+from play_options import (
+    PLAY2_LOGIC_OPTIONS, PLAY_OPTIONS, PlayOption, template_kind,
+)
+from settings_store import load_settings, save_play_selection, site_day
 from ui_common import hug
-
 class HistoryPanel(QFrame):
     results_changed = Signal(object)
     workbook_changed = Signal()
@@ -43,6 +46,34 @@ class HistoryPanel(QFrame):
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 14, 20, 12)
         root.setSpacing(8)
+        settings = load_settings()
+        self._play_mode = settings.play_mode
+        self._play2_logic = settings.play2_logic
+        self._restoring_selection = False
+        mode_card = QFrame()
+        mode_card.setObjectName("modeSurface")
+        mode_layout = QVBoxLayout(mode_card)
+        mode_layout.setContentsMargins(14, 12, 14, 12)
+        mode_layout.setSpacing(8)
+        caption = QLabel("00  任务玩法")
+        caption.setObjectName("sectionLabel")
+        mode_layout.addWidget(caption)
+        self.play_group, self.play_buttons, self.play_help = self._choice_row(
+            mode_layout, PLAY_OPTIONS, self._play_mode, self._play_changed
+        )
+        self.logic_panel = QFrame()
+        self.logic_panel.setObjectName("logicSurface")
+        logic_layout = QVBoxLayout(self.logic_panel)
+        logic_layout.setContentsMargins(12, 8, 12, 8)
+        logic_layout.setSpacing(6)
+        logic_caption = QLabel("玩法二投注逻辑")
+        logic_caption.setObjectName("sectionLabel")
+        logic_layout.addWidget(logic_caption)
+        self.logic_group, self.logic_buttons, self.logic_help = self._choice_row(
+            logic_layout, PLAY2_LOGIC_OPTIONS, self._play2_logic, self._logic_changed
+        )
+        mode_layout.addWidget(self.logic_panel)
+        root.addWidget(mode_card)
         self.file_card = QFrame()
         self.file_card.setObjectName("fileSurface")
         self.file_card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
@@ -70,7 +101,10 @@ class HistoryPanel(QFrame):
         self.use_copy = QCheckBox("使用副本（保留源 Excel）")
         self.use_copy.setObjectName("copyToggle")
         self.use_copy.setChecked(self.config.get("use_copy", True))
-        self.use_copy.setToolTip("勾选：在同目录创建副本；取消：直接修改选中的 Excel。仅补录 B 列空白。")
+        self.use_copy.setToolTip(
+            "勾选：在同目录创建副本；取消：直接修改选中的 Excel。"
+            "玩法一仅补 B 列，玩法二仅补 B:H 的开奖空白。"
+        )
         self.use_copy.toggled.connect(self._mode_changed)
         files.addWidget(self.choose, alignment=Qt.AlignVCenter)
         files.addWidget(self.use_copy, alignment=Qt.AlignVCenter)
@@ -100,9 +134,9 @@ class HistoryPanel(QFrame):
         self.interval_label.setObjectName("hint")
         dates.addWidget(self.interval_label)
         root.addLayout(dates)
-        rule = QLabel("A 列匹配期号  →  B 列仅补空白")
-        rule.setObjectName("mappingHint")
-        root.addWidget(rule)
+        self.mapping_rule = QLabel()
+        self.mapping_rule.setObjectName("mappingHint")
+        root.addWidget(self.mapping_rule)
         note_box = QFrame()
         note_box.setObjectName("syncStatus")
         note_layout = QVBoxLayout(note_box)
@@ -130,15 +164,114 @@ class HistoryPanel(QFrame):
         scope.setObjectName("hint")
         root.addWidget(scope)
         root.addStretch(1)
+        self._sync_play_visibility()
         self._controls()
 
     @property
     def busy(self) -> bool:
         return self.worker is not None
 
+    def _choice_row(self, parent: QVBoxLayout, options: tuple[PlayOption, ...],
+                    selected: str, callback):
+        row = QHBoxLayout()
+        row.setSpacing(7)
+        group = QButtonGroup(self)
+        buttons, helps = {}, {}
+        for option in options:
+            radio = QRadioButton(option.label)
+            radio.setObjectName("modeChoice")
+            radio.setCursor(Qt.PointingHandCursor)
+            group.addButton(radio)
+            buttons[option.key] = radio
+            help_button = QToolButton()
+            help_button.setText("?")
+            help_button.setObjectName("optionHelp")
+            help_button.setToolTip(option.help_text)
+            help_button.setAccessibleName(f"{option.label}规则说明")
+            help_button.setFixedSize(22, 22)
+            help_button.setCursor(Qt.WhatsThisCursor)
+            helps[option.key] = help_button
+            row.addWidget(radio)
+            row.addWidget(help_button)
+            row.addSpacing(12)
+        row.addStretch(1)
+        parent.addLayout(row)
+        buttons[selected].setChecked(True)
+        for key, button in buttons.items():
+            button.toggled.connect(
+                lambda checked, value=key: checked and callback(value)
+            )
+        return group, buttons, helps
+
+    def _set_choice(self, buttons: dict[str, QRadioButton], key: str) -> None:
+        self._restoring_selection = True
+        try:
+            buttons[key].setChecked(True)
+        finally:
+            self._restoring_selection = False
+
+    def _play_changed(self, value: str) -> None:
+        if self._restoring_selection:
+            return
+        previous = self._play_mode
+        if self.busy or self.running:
+            self._set_choice(self.play_buttons, previous)
+            return
+        try:
+            save_play_selection(value, self._play2_logic)
+        except (OSError, ValueError) as exc:
+            self._set_choice(self.play_buttons, previous)
+            self.note.setText("玩法未变更：" + str(exc))
+            app_log.error(str(exc))
+            return
+        self._play_mode = value
+        self._sync_play_visibility()
+        self._show_play_selection()
+        self.workbook_changed.emit()
+
+    def _logic_changed(self, value: str) -> None:
+        if self._restoring_selection:
+            return
+        previous = self._play2_logic
+        if self.busy or self.running:
+            self._set_choice(self.logic_buttons, previous)
+            return
+        try:
+            save_play_selection(self._play_mode, value)
+        except (OSError, ValueError) as exc:
+            self._set_choice(self.logic_buttons, previous)
+            self.note.setText("玩法二逻辑未变更：" + str(exc))
+            app_log.error(str(exc))
+            return
+        self._play2_logic = value
+        self._show_play_selection()
+        self.workbook_changed.emit()
+
+    def _show_play_selection(self) -> None:
+        play = next(item.label for item in PLAY_OPTIONS if item.key == self._play_mode)
+        suffix = ""
+        if self._play_mode == "play2":
+            logic = next(
+                item.label for item in PLAY2_LOGIC_OPTIONS
+                if item.key == self._play2_logic
+            )
+            suffix = f" / {logic}"
+        self.note.setText(f"已选择{play}{suffix}；点击“开始”后锁定本次任务配置。")
+        app_log.info(f"任务玩法已切换为：{play}{suffix}")
+
+    def _sync_play_visibility(self) -> None:
+        is_play2 = self._play_mode == "play2"
+        self.logic_panel.setVisible(is_play2)
+        self.mapping_rule.setText(
+            "A 列匹配期号  →  B 至 G 列依次补平1至平6，H 列补特码（合计 B:H）"
+            if is_play2 else "A 列匹配期号  →  B 列仅补特码空白"
+        )
+
     def _controls(self) -> None:
         editable = not (self.busy or self.running)
         for button in (self.start, self.choose, self.use_copy, self.today):
+            button.setEnabled(editable)
+        for button in (*self.play_buttons.values(), *self.logic_buttons.values()):
             button.setEnabled(editable)
         self.day.setEnabled(editable and not self.today.isChecked())
         self.stop.setEnabled(self.busy or self.running)
@@ -147,10 +280,11 @@ class HistoryPanel(QFrame):
         name = Path(path).name if path else "尚未选择工作簿"
         self.path_label.setText(name)
         self.path_label.setToolTip(path)
+        columns = "B 至 H 列开奖空白" if self._play_mode == "play2" else "B 列空白"
         self.file_hint.setText(
-            "副本模式：补录到同目录的 _已完成.xlsx，源 Excel 不变。"
+            f"副本模式：补录到同目录的 _已完成.xlsx，源 Excel 不变；仅填写{columns}。"
             if self.use_copy.isChecked() else
-            "直接修改：补录到所选源 Excel，仅填写 B 列空白。"
+            f"直接修改：补录到所选源 Excel，仅填写{columns}。"
         )
         interval = load_settings().poll_interval
         self.interval_label.setText(f"间隔 {interval} 秒" if interval else "间隔：请到运行配置设置")
@@ -198,9 +332,11 @@ class HistoryPanel(QFrame):
             raise ValueError("请先停止补录，再选择 Excel")
         source = source.resolve()
         checked = self.use_copy.isChecked()
+        self._validate_workbook(source, self._play_mode)
         path = select_workbook(source, checked, self.config)
         sync = WorkbookSync(path)
         try:
+            self._validate_template(sync.template_kind, self._play_mode)
             pending = sync.pending_count
         finally:
             sync.close()
@@ -216,9 +352,28 @@ class HistoryPanel(QFrame):
             raise
         self._controls()
         mode = "工作副本" if checked else "源 Excel（直接修改）"
-        self.note.setText(f"已绑定{mode}，有 {pending} 行 B 列待补录。")
-        app_log.info(f"已绑定{mode}：{path.name}，待补录 {pending} 行")
+        self.note.setText(f"已绑定{mode}，有 {pending} 期开奖数据待补录。")
+        app_log.info(f"已绑定{mode}：{path.name}，待补录 {pending} 期")
         self.workbook_changed.emit()
+
+    @staticmethod
+    def _validate_template(actual: str, play_mode: str) -> None:
+        expected = template_kind(play_mode)
+        if actual == expected:
+            return
+        selected = "玩法二" if play_mode == "play2" else "玩法一"
+        actual_name = "玩法二" if actual == "play_two" else "玩法一"
+        raise ValueError(
+            f"当前选择的是{selected}，但 Excel 是{actual_name}模板；"
+            f"请重新选择对应模板。"
+        )
+
+    def _validate_workbook(self, path: Path, play_mode: str) -> None:
+        sync = WorkbookSync(path)
+        try:
+            self._validate_template(sync.template_kind, play_mode)
+        finally:
+            sync.close()
 
     def _save(self) -> None:
         save_config(
@@ -248,6 +403,7 @@ class HistoryPanel(QFrame):
             return
         settings, auth = load_settings(), load()
         try:
+            selected_rule = rule_key(settings.play_mode, settings.play2_logic)
             results_url(settings.url)
             if not auth:
                 raise ValueError("请先在“登录管理”导入单账号登录态")
@@ -256,6 +412,7 @@ class HistoryPanel(QFrame):
             path = self.config.get("workbook", "")
             if not path or not Path(path).is_file():
                 raise ValueError("请先选择 Excel")
+            self._validate_workbook(Path(path), settings.play_mode)
             bet_plan = None
             if settings.auto_bet and settings.profit_halt_date != site_day():
                 if (settings.bet_count is None
@@ -275,7 +432,9 @@ class HistoryPanel(QFrame):
             self._error(str(exc))
             return
         day = datetime.now().date().isoformat() if self.today.isChecked() else self.day.date().toString("yyyy-MM-dd")
-        self.worker = HistoryWorker(settings.url, auth, path, day, self, bet_plan)
+        self.worker = HistoryWorker(
+            settings.url, auth, path, day, self, bet_plan, selected_rule
+        )
         self.worker.progress.connect(self._progress)
         self.worker.bet_succeeded.connect(app_log.info)
         self.worker.bet_failed.connect(self._bet_failed)
@@ -302,7 +461,7 @@ class HistoryPanel(QFrame):
     def _success(self, result: dict) -> None:
         self.last_rows = result["rows"]
         report = result["report"]
-        message = (f"{result['date']}：查询 {result['pages']} 页，写入 {report.written} 格；"
+        message = (f"{result['date']}：查询 {result['pages']} 页，补录 {report.written} 期；"
                    f"歧义跳过 {report.ambiguous} 项。")
         self.note.setText(message)
         app_log.info(message)

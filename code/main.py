@@ -29,7 +29,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.debug_button = None
         self.setWindowTitle(APP_TITLE)
-        self.setMinimumSize(760, 600)
+        self.setMinimumSize(760, 720)
         self.setWindowIcon(build_qicon())
         canvas = QWidget()
         canvas.setObjectName("canvas")
@@ -64,7 +64,7 @@ class MainWindow(QMainWindow):
         self.refresh_bet_badge()
         self.refresh_run_badge()
         self._configure_profit_timer()
-        self.resize(800, 600)
+        self.resize(800, 720)
         if development_mode():
             self._create_debug_button()
 

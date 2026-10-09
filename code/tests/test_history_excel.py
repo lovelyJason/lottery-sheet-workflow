@@ -9,6 +9,9 @@ from history_excel import WorkbookSync, WorkbookError, import_source
 def record(issue, code=33):
     return {"issue":str(issue),"special_code":code}
 
+def play_two_record(issue, numbers="1,2,3,4,5,6", code=33):
+    return {"issue":str(issue),"numbers":numbers,"special_code":code}
+
 class ExcelTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
@@ -30,6 +33,15 @@ class ExcelTests(unittest.TestCase):
     def sync(self,path):
         s=WorkbookSync(path);self.addCleanup(s.close)
         return s
+    def make_play_two(self, rows):
+        w=Workbook();s=w.active;s.title="Sheet1"
+        s.append(["数据"])
+        s.append(["期数","平1","平2","平3","平4","平5","平6","特码","生肖"])
+        for row in rows:s.append(row)
+        for row in range(3, 3 + len(rows)):
+            s.cell(row, 9).value=f"=H{row}+1"
+        w.save(self.path);w.close()
+        return self.path
     def test_full_and_three_digit_leading_zeros_preserve_original(self):
         self.make([["115055000",None],["999",None],["001",None]])
         raw=self.path.read_bytes();out=import_source(self.path)
@@ -133,5 +145,52 @@ class ExcelTests(unittest.TestCase):
         self.assertFalse(s.needs_more([]));self.assertEqual(s.apply([]).written,0)
         for code in (0,50,True):
             with self.subTest(code=code),self.assertRaises(WorkbookError):s.apply([record(115054996,code)])
+
+    def test_play_two_detects_template_and_writes_six_numbers_and_special(self):
+        self.make_play_two([[115056775,None,None,None,None,None,None,None,None]])
+        s=self.sync(self.path)
+        self.assertEqual(s.template_kind,"play_two")
+        self.assertEqual(s.pending_count,1)
+        report=s.apply([play_two_record(115056775,"28,13,36,6,16,5",33)])
+        self.assertEqual((report.written,report.written_issues),(1,("115056775",)))
+        w=load_workbook(self.path,data_only=False)
+        self.assertEqual([w.active.cell(3,c).value for c in range(2,9)],[28,13,36,6,16,5,33])
+        self.assertEqual(w.active["I3"].value,"=H3+1")
+        w.close()
+
+    def test_play_two_only_fills_blank_cells_in_partial_row(self):
+        self.make_play_two([[115056775,49,None,None,None,None,None,17,None]])
+        report=self.sync(self.path).apply([
+            play_two_record(115056775,"28,13,36,6,16,5",33)
+        ])
+        self.assertEqual(report.written,1)
+        w=load_workbook(self.path)
+        self.assertEqual([w.active.cell(3,c).value for c in range(2,9)],[49,13,36,6,16,5,17])
+        w.close()
+
+    def test_play_two_rejects_missing_or_malformed_numbers_without_writing(self):
+        self.make_play_two([[115056775,None,None,None,None,None,None,None,None]])
+        for numbers in (None,"1,2,3","1,2,3,4,5,50"):
+            with self.subTest(numbers=numbers):
+                with self.assertRaises(WorkbookError):
+                    self.sync(self.path).apply([play_two_record(115056775,numbers,33)])
+        w=load_workbook(self.path)
+        self.assertEqual([w.active.cell(3,c).value for c in range(2,9)],[None]*7)
+        w.close()
+
+    def test_play_two_conflicting_records_are_not_written(self):
+        self.make_play_two([[115056775,None,None,None,None,None,None,None,None]])
+        report=self.sync(self.path).apply([
+            play_two_record(115056775,"1,2,3,4,5,6",33),
+            play_two_record(115056775,"1,2,3,4,5,7",33),
+        ])
+        self.assertEqual((report.written,report.ambiguous),(0,1))
+
+    def test_play_one_remains_compatible_without_numbers_field(self):
+        self.make([[115054996,None]])
+        s=self.sync(self.path)
+        self.assertEqual(s.template_kind,"play_one")
+        self.assertEqual(s.apply([record(115054996,33)]).written,1)
+        self.assertEqual(self.read(self.path),[33])
 
 if __name__=="__main__":unittest.main()

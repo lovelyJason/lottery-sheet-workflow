@@ -51,8 +51,11 @@ class BetPlan:
     zodiac: str | None
     start_offset: int = 1
     point_schedule: tuple[int, ...] = ()
+    rule_key: str = "play1"
 
     def __post_init__(self) -> None:
+        if not isinstance(self.rule_key, str) or not self.rule_key:
+            raise BetError("自动投注规则无效")
         schedule = self.point_schedule or (self.points,) * self.count
         if len(schedule) != self.count or any(
                 isinstance(value, bool) or not isinstance(value, int) or value < 1
@@ -86,7 +89,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 def zodiac_numbers(zodiac: str, open_time: int) -> set[int]:
     if zodiac not in ZODIACS:
-        raise BetError("Excel I1 生肖无效")
+        raise BetError("投注规则计算出的生肖无效")
     try:
         day = datetime.fromtimestamp(int(open_time), CHINA_TIME).date()
         boundary = datetime.fromisoformat(LUNAR_NEW_YEAR[day.year]).date()
@@ -103,12 +106,12 @@ def selected_numbers(plan: BetPlan, open_time: int) -> list[int]:
     excluded: set[int] = set()
     if plan.tail is not None:
         if plan.tail not in tuple(str(i) for i in range(10)):
-            raise BetError("Excel H1 尾数无效")
+            raise BetError("投注规则计算出的尾数无效")
         excluded.update(number for number in range(1, 50) if str(number).endswith(plan.tail))
     if plan.zodiac is not None:
         excluded.update(zodiac_numbers(plan.zodiac, open_time))
     if not excluded:
-        raise BetError("Excel H1/I1 都为空，已停止自动投注")
+        raise BetError("投注排除条件为空，已停止自动投注")
     return [number for number in range(1, 50) if number not in excluded]
 
 

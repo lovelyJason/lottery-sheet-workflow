@@ -9,6 +9,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 from auth_storage import APP_DIR, _restrict
 from china_time import CHINA_TIME
+from play_options import normalize_play_selection
 
 SETTINGS_FILE = APP_DIR / "settings.json"
 
@@ -29,6 +30,8 @@ class Settings:
     profit_halt_reason: str = ""
     bet_points_schedule: tuple[int, ...] = ()
     profit_poll_interval: int | None = None
+    play_mode: str = "play1"
+    play2_logic: str = "logic1"
 
 
 def load_settings() -> Settings:
@@ -46,6 +49,9 @@ def load_settings() -> Settings:
     schedule = _stored_schedule(raw.get("bet_points_schedule"), count)
     if not schedule and count is not None and legacy_points is not None:
         schedule = (legacy_points,) * count
+    play_mode, play2_logic = normalize_play_selection(
+        raw.get("play_mode"), raw.get("play2_logic")
+    )
     return Settings(
         url=url.strip(),
         bet_count=count,
@@ -63,6 +69,8 @@ def load_settings() -> Settings:
                             if isinstance(raw.get("profit_halt_reason"), str) else ""),
         bet_points_schedule=schedule,
         profit_poll_interval=_stored_positive(raw.get("profit_poll_interval")),
+        play_mode=play_mode,
+        play2_logic=play2_logic,
     )
 
 
@@ -93,6 +101,17 @@ def save_poll_interval(raw: str) -> int:
         raw, str(current.profit_poll_interval or current.poll_interval or 60)
     )
     return interval
+
+
+def save_play_selection(play_mode: str, play2_logic: str) -> tuple[str, str]:
+    """Persist the workflow selected for the next task start."""
+    normalized = normalize_play_selection(play_mode, play2_logic)
+    if normalized != (play_mode, play2_logic):
+        raise ValueError("玩法或玩法二逻辑无效")
+    data = _read()
+    data["play_mode"], data["play2_logic"] = normalized
+    _write(data)
+    return normalized
 
 
 def save_bets(count_raw: str, points_raw: str | list[str] | tuple[str, ...], auto_bet: bool = False,
@@ -268,6 +287,8 @@ def _read() -> dict:
         "profit_halt_date": current.profit_halt_date,
         "profit_halt_reason": current.profit_halt_reason,
         "profit_poll_interval": current.profit_poll_interval,
+        "play_mode": current.play_mode,
+        "play2_logic": current.play2_logic,
     }
 
 

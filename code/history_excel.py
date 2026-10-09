@@ -27,6 +27,19 @@ class SyncReport:
     written_issues: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class WorkbookLayout:
+    """Columns populated by one workbook template."""
+
+    key: str
+    output_columns: tuple[int, ...]
+
+
+PLAY_ONE = WorkbookLayout("play_one", (2,))
+PLAY_TWO = WorkbookLayout("play_two", (2, 3, 4, 5, 6, 7, 8))
+PLAY_TWO_HEADERS = ("期数", "平1", "平2", "平3", "平4", "平5", "平6", "特码")
+
+
 def _digest(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -90,21 +103,60 @@ def _empty(cell) -> bool:
     )
 
 
-def _records(records: list[dict]) -> tuple[dict[str, int], set[str]]:
-    parsed: dict[str, int] = {}
+def _draw_numbers(value: object) -> tuple[int, ...] | None:
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.split(",")]
+    elif isinstance(value, (list, tuple)):
+        parts = list(value)
+    else:
+        return None
+    if len(parts) != 6:
+        return None
+    result = []
+    for part in parts:
+        normalized = _issue(part)
+        if normalized is None or not 1 <= int(normalized) <= 49:
+            return None
+        result.append(int(normalized))
+    return tuple(result)
+
+
+def _record_values(record: dict, layout: WorkbookLayout) -> tuple[int, ...]:
+    number = record.get("special_code")
+    if isinstance(number, bool):
+        raise WorkbookError("开奖结果字段格式不正确：需要完整期数和特码。")
+    normalized = _issue(number)
+    if normalized is None or not 1 <= int(normalized) <= 49:
+        raise WorkbookError("开奖结果的特码应为 1–49 的整数。")
+    if layout == PLAY_ONE:
+        return (int(normalized),)
+    numbers = _draw_numbers(record.get("numbers"))
+    if numbers is None:
+        raise WorkbookError("玩法二开奖结果需要六个 1–49 的平码。")
+    return numbers + (int(normalized),)
+
+
+def _records(records: list[dict], layout: WorkbookLayout) -> tuple[dict[str, tuple[int, ...]], set[str]]:
+    parsed: dict[str, tuple[int, ...]] = {}
     conflicts: set[str] = set()
     for record in records:
         issue = _issue(record.get("issue")) if isinstance(record, dict) else None
-        number = record.get("special_code") if isinstance(record, dict) else None
-        if not issue or len(issue) <= 3 or isinstance(number, bool):
+        if not issue or len(issue) <= 3:
             raise WorkbookError("开奖结果字段格式不正确：需要完整期数和特码。")
-        normalized = _issue(number)
-        if normalized is None or not 1 <= int(normalized) <= 49:
-            raise WorkbookError("开奖结果的特码应为 1–49 的整数。")
-        if issue in parsed and parsed[issue] != int(normalized):
+        values = _record_values(record, layout)
+        if issue in parsed and parsed[issue] != values:
             conflicts.add(issue)
-        parsed[issue] = int(normalized)
+        parsed[issue] = values
     return parsed, conflicts
+
+
+def _detect_layout(sheet) -> WorkbookLayout:
+    """Recognize play two by its complete A:H header; otherwise retain play one."""
+    for row in range(1, min(sheet.max_row, 20) + 1):
+        headers = tuple(sheet.cell(row, column).value for column in range(1, 9))
+        if headers == PLAY_TWO_HEADERS:
+            return PLAY_TWO
+    return PLAY_ONE
 
 
 class WorkbookSync:
@@ -112,7 +164,9 @@ class WorkbookSync:
 
     Short periods refer to the nearest 1000-issue cycle around the newest record.
     A distance of exactly 500 or repeated suffixes is ambiguous and is not written.
-    Full periods never fall back to suffix matching. Only blank column B is written.
+    Full periods never fall back to suffix matching. Existing cells are never overwritten.
+    Play one writes special_code to B. A play-two A:H header writes numbers to B:G
+    and special_code to H.
     """
 
     def __init__(self, path: Path, sheet_name: str | None = None):
@@ -131,6 +185,11 @@ class WorkbookSync:
             self.workbook.close()
             raise WorkbookError("指定的工作表不存在。")
         self.sheet = self.workbook[name]
+        self.layout = _detect_layout(self.sheet)
+
+    @property
+    def template_kind(self) -> str:
+        return self.layout.key
 
     @property
     def pending_count(self) -> int:
@@ -138,14 +197,16 @@ class WorkbookSync:
 
     def _rows(self, pending_only=False) -> dict[int, str]:
         rows = {}
-        for row in self.sheet.iter_rows(min_col=1, max_col=2):
-            period, output = row
+        last_column = max(self.layout.output_columns)
+        for row in self.sheet.iter_rows(min_col=1, max_col=last_column):
+            period = row[0]
             issue = _issue(period.value)
-            if issue is not None and (not pending_only or _empty(output)):
+            pending = any(_empty(row[column - 1]) for column in self.layout.output_columns)
+            if issue is not None and (not pending_only or pending):
                 rows[period.row] = issue
         return rows
 
-    def _targets(self, parsed: dict[str, int]) -> tuple[dict[int, str], set[int]]:
+    def _targets(self, parsed: dict[str, tuple[int, ...]]) -> tuple[dict[int, str], set[int]]:
         if not parsed:
             return {}, set()
         latest = max(map(int, parsed))
@@ -176,7 +237,7 @@ class WorkbookSync:
         """Fetch another page only if a pending, unambiguous period precedes this batch."""
         if not records or not self.pending_count:
             return False
-        parsed, conflicts = _records(records)
+        parsed, conflicts = _records(records, self.layout)
         targets, ambiguous = self._targets(parsed)
         oldest = min(map(int, parsed))
         for row in self._rows(pending_only=True):
@@ -188,36 +249,46 @@ class WorkbookSync:
         return False
 
     def apply(self, records: list[dict]) -> SyncReport:
-        parsed, conflicts = _records(records)
+        parsed, conflicts = _records(records, self.layout)
         targets, ambiguous = self._targets(parsed)
         pending = self._rows(pending_only=True)
         formula_changes = self._upgrade_blank_d_formulas()
-        changes = []
+        changes: list[tuple[int, tuple[tuple[int, int], ...]]] = []
         for row in pending:
             target = targets.get(row)
             if row not in ambiguous and target in parsed and target not in conflicts:
-                changes.append((row, parsed[target]))
+                cells = tuple(
+                    (column, value)
+                    for column, value in zip(self.layout.output_columns, parsed[target])
+                    if _empty(self.sheet.cell(row, column))
+                )
+                if cells:
+                    changes.append((row, cells))
         conflict_rows = {row for row, target in targets.items() if target in conflicts}
         report = SyncReport(
             len(changes), self.path, len(pending) - len(changes),
             len((ambiguous | conflict_rows) & pending.keys()),
-            tuple(targets[row] for row, _number in changes),
+            tuple(targets[row] for row, _cells in changes),
         )
         if not changes and not formula_changes:
             return report
-        previous = {row: self.sheet.cell(row, 2).value for row, _ in changes}
-        for row, number in changes:
-            self.sheet.cell(row, 2).value = number
+        previous = {
+            (row, column): self.sheet.cell(row, column).value
+            for row, cells in changes for column, _value in cells
+        }
+        for row, cells in changes:
+            for column, value in cells:
+                self.sheet.cell(row, column).value = value
         try:
-            if formula_changes:
+            if changes or formula_changes:
                 calculation = getattr(self.workbook, "calculation", None)
                 if calculation is not None:
                     calculation.fullCalcOnLoad = True
                     calculation.forceFullCalc = True
             self._save()
         except Exception:
-            for row, value in previous.items():
-                self.sheet.cell(row, 2).value = value
+            for (row, column), value in previous.items():
+                self.sheet.cell(row, column).value = value
             for row, value in formula_changes.items():
                 self.sheet.cell(row, 4).value = value
             raise
@@ -226,6 +297,8 @@ class WorkbookSync:
     def _upgrade_blank_d_formulas(self) -> dict[int, str]:
         """Migrate only the legacy generated formulas; custom templates stay untouched."""
         previous: dict[int, str] = {}
+        if self.layout != PLAY_ONE:
+            return previous
         for row, _issue_value in self._rows().items():
             cell = self.sheet.cell(row, 4)
             value = cell.value
