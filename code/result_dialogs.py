@@ -647,10 +647,10 @@ class LogDialog(QDialog):
     def _render(self) -> None:
         self._placing = True
         self.view.setHtml(document_html())
-        cursor = self.view.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        cursor.insertBlock()
-        self.view.setTextCursor(cursor)
+        caret = self.view.textCursor()
+        caret.movePosition(QTextCursor.End)
+        caret.insertBlock()
+        self.view.setTextCursor(caret)
         self._placing = False
         self.view.setFocus(Qt.OtherFocusReason)
 
