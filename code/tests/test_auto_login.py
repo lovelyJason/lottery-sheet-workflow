@@ -1,5 +1,6 @@
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -37,7 +38,8 @@ class CredentialTests(unittest.TestCase):
             self.assertTrue(load_credentials(path).auto_relogin)
             save_credentials(CONFIG, path)
             self.assertEqual(load_credentials(path), CONFIG)
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            if os.name != "nt":
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_all_four_credentials_are_required(self):
         with tempfile.TemporaryDirectory() as temporary:
