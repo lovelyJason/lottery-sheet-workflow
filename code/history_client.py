@@ -9,6 +9,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from session_errors import AUTH_EXPIRED_CODES, SessionExpiredError
+
 
 class HistoryError(ValueError):
     pass
@@ -53,11 +55,14 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class HistoryClient:
-    def __init__(self, site: str, auth: dict, opener=None):
+    def __init__(self, site: str, auth: dict, opener=None, session=None,
+                 stage: str = "历史补录"):
         self.site = origin(site)
-        self.auth = auth
+        self.auth = dict(auth)
         self.api = ""
         self.opener = opener or build_opener(NoRedirect())
+        self.session = session
+        self.stage = stage
 
     def _get(self, url: str, headers: dict | None = None) -> dict:
         try:
@@ -78,7 +83,7 @@ class HistoryClient:
             if exc.code in (401, 403):
                 if not headers:
                     raise HistoryError("网站配置入口访问受限，请检查网页地址与网络") from None
-                raise HistoryError("登录态失效或访问受限，请重新导入登录态") from None
+                raise SessionExpiredError("登录状态已失效") from None
             raise HistoryError(f"历史查询 HTTP {exc.code}，本轮未保存") from None
         except (URLError, TimeoutError, OSError):
             raise HistoryError("网络连接失败或超时，请检查地址与网络") from None
@@ -110,21 +115,28 @@ class HistoryClient:
             raise HistoryError("分页页码必须为正整数")
         if not self.api:
             self.discover()
-        token = self.auth.get("token", "").strip()
-        uuid = self.auth.get("uuid", "").strip()
-        if not token or not uuid or any(c in token + uuid for c in "\r\n"):
-            raise HistoryError("登录态字段不完整，请重新导入")
-        if not token.startswith("Bearer "):
-            token = "Bearer " + token
         query = urlencode({"gameKey": "bingoLh", "date": day, "page": page})
-        body = self._get(self.api + "/api/v1/member/openResultList?" + query, {
-            "Accept": "application/json", "Authorization": token, "uuid": uuid,
-            "Device-Type": "pc", "X-Requested-With": "XMLHttpRequest",
-            "Origin": self.site, "Referer": self.site + "/",
-        })
+        url = self.api + "/api/v1/member/openResultList?" + query
+        body = self._authenticated(
+            f"{self.stage}第 {page} 页", lambda: self._get(url, self._auth_headers())
+        )
+        if body.get("code") in AUTH_EXPIRED_CODES:
+            if self.session is None:
+                token = str(self.auth.get("token", ""))
+                uuid = str(self.auth.get("uuid", ""))
+                msg = safe_message(body.get("msg", "登录状态已失效"), (
+                    token, token.removeprefix("Bearer "), uuid,
+                    self.auth.get("refreshToken", ""),
+                ))
+                raise HistoryError(f"历史查询失败：{msg}")
+            body = self._retry_expired(
+                f"{self.stage}第 {page} 页", lambda: self._get(url, self._auth_headers())
+            )
         if body.get("encrypt") is True:
             raise HistoryError("当前接口启用了加密响应，本轮未写入 Excel")
         if body.get("code") not in SUCCESS_CODES:
+            token = str(self.auth.get("token", ""))
+            uuid = str(self.auth.get("uuid", ""))
             msg = safe_message(body.get("msg", "查询失败"), (
                 token, token.removeprefix("Bearer "), uuid,
                 self.auth.get("refreshToken", ""),
@@ -179,12 +191,39 @@ class HistoryClient:
 
     def _fetch_pages(self, day: str, pages: list[int]) -> dict[int, list[dict]]:
         def one(page: int) -> tuple[int, list[dict]]:
-            client = HistoryClient(self.site, self.auth)
+            client = HistoryClient(
+                self.site, self.auth, session=self.session, stage=self.stage
+            )
             client.api = self.api
             return page, client.fetch_page(day, page)
 
         with ThreadPoolExecutor(max_workers=min(8, len(pages))) as pool:
             return dict(pool.map(one, pages))
+
+    def _auth_headers(self) -> dict:
+        token = str(self.auth.get("token", "")).strip()
+        uuid = str(self.auth.get("uuid", "")).strip()
+        if not token or not uuid or any(c in token + uuid for c in "\r\n"):
+            raise SessionExpiredError("登录状态不存在或已失效")
+        if not token.startswith("Bearer "):
+            token = "Bearer " + token
+        return {
+            "Accept": "application/json", "Authorization": token, "uuid": uuid,
+            "Device-Type": "pc", "X-Requested-With": "XMLHttpRequest",
+            "Origin": self.site, "Referer": self.site + "/",
+        }
+
+    def _authenticated(self, stage: str, callback):
+        try:
+            return callback()
+        except SessionExpiredError:
+            return self._retry_expired(stage, callback)
+
+    def _retry_expired(self, stage: str, callback):
+        if self.session is None:
+            raise SessionExpiredError("登录状态已失效，请重新登录")
+        self.auth = self.session.renew(self.site, self.auth, stage)
+        return callback()
 
 
 def _cancelled(cancel) -> bool:

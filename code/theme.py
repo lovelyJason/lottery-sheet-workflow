@@ -58,18 +58,13 @@ QLabel#value {{
 QLabel#badge {{
     font-size: 12px;
     font-weight: 700;
+    min-height: 18px;
     padding: 3px 10px;
     border-radius: 10px;
 }}
 QLabel#badge[state="ready"] {{
     background: {GREEN_BG};
     color: {GREEN_INK};
-    min-width: 0;
-    max-width: 240px;
-    min-height: 0;
-    max-height: 28px;
-    padding: 3px 10px;
-    border-radius: 10px;
 }}
 QFrame#hero {{
     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -221,6 +216,20 @@ QMessageBox QLabel {{
     color: {INK};
     font-size: 14px;
 }}
+QFrame#toast {{
+    background: {WHITE};
+    border: 1px solid #FFD1D1;
+    border-radius: 10px;
+}}
+QFrame#toast[kind="success"] {{ border-color: #B7E7C9; }}
+QFrame#toast QLabel#toastText {{
+    color: {INK}; font-size: 13px; font-weight: 600;
+}}
+QFrame#toast QLabel#toastIcon {{
+    background: {RED}; color: {WHITE}; border-radius: 10px;
+    font-size: 13px; font-weight: 700;
+}}
+QFrame#toast[kind="success"] QLabel#toastIcon {{ background: #28A35A; }}
 """
 
 # Scoped desktop configuration surface; preserve the surrounding application's palette.
@@ -277,8 +286,11 @@ QCheckBox#copyToggle::indicator {{
     subcontrol-position: left center;
 }}
 QCheckBox {{ color: {INK}; font-size: 13px; spacing: 8px; background: transparent; }}
-QRadioButton#modeChoice {{ color: {INK}; font-size: 13px; spacing: 7px; background: transparent; }}
-QRadioButton#modeChoice::indicator {{ width: 16px; height: 16px; }}
+QRadioButton#modeChoice {{
+    color: {INK}; font-size: 13px; spacing: 8px; background: transparent;
+    padding: 2px 0;
+}}
+QRadioButton#modeChoice::indicator {{ width: 18px; height: 18px; }}
 QRadioButton#modeChoice:disabled {{ color: #9BA8B8; }}
 QToolButton#optionHelp {{
     background: {CONFIG_BLUE_SOFT}; color: {BLUE}; border: 1px solid #A9D2F5;
@@ -316,6 +328,26 @@ QCheckBox::indicator:disabled {{ border-color: {CONFIG_LINE}; background: #E5EBF
 QCheckBox#copyToggle::indicator {{
     subcontrol-origin: content;
     subcontrol-position: left center;
+}}
+QRadioButton#modeChoice::indicator:unchecked {{
+    image: url("{_CONFIG_ASSETS}/config-radio.svg");
+}}
+QRadioButton#modeChoice::indicator:unchecked:hover,
+QRadioButton#modeChoice::indicator:unchecked:focus {{
+    image: url("{_CONFIG_ASSETS}/config-radio-hover.svg");
+}}
+QRadioButton#modeChoice::indicator:checked {{
+    image: url("{_CONFIG_ASSETS}/config-radio-checked.svg");
+}}
+QRadioButton#modeChoice::indicator:checked:hover,
+QRadioButton#modeChoice::indicator:checked:focus {{
+    image: url("{_CONFIG_ASSETS}/config-radio-checked-hover.svg");
+}}
+QRadioButton#modeChoice::indicator:unchecked:disabled {{
+    image: url("{_CONFIG_ASSETS}/config-radio-disabled.svg");
+}}
+QRadioButton#modeChoice::indicator:checked:disabled {{
+    image: url("{_CONFIG_ASSETS}/config-radio-checked-disabled.svg");
 }}
 QDateEdit::down-arrow {{ image: url("{_CONFIG_ASSETS}/config-down.svg"); width: 12px; height: 8px; }}
 """

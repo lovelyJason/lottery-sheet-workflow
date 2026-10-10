@@ -19,16 +19,20 @@ class ResultFetchWorker(QThread):
     succeeded = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, site: str, auth: dict, day: str, page: int, parent=None):
+    def __init__(self, site: str, auth: dict, day: str, page: int, parent=None,
+                 session=None):
         super().__init__(parent)
         self.site, self.auth, self.day, self.page = site, dict(auth), day, page
+        self.session = session
         self.cancel = Event()
 
     def run(self) -> None:
         try:
             if self.cancel.is_set():
                 return
-            rows = HistoryClient(self.site, self.auth).fetch_page(self.day, self.page)
+            rows = HistoryClient(
+                self.site, self.auth, session=self.session, stage="历史结果"
+            ).fetch_page(self.day, self.page)
             if self.cancel.is_set():
                 return
             self.succeeded.emit({"page": self.page, "rows": rows})
@@ -52,18 +56,27 @@ class HistoryWorker(QThread):
 
     def __init__(self, site: str, auth: dict, workbook: str, day: str,
                  parent=None, bet_plan: BetPlan | None = None,
-                 bet_rule_key: str = PLAY1):
+                 bet_rule_key: str = PLAY1, session=None):
         super().__init__(parent)
         self.site, self.auth, self.workbook, self.day = site, auth, workbook, day
         self.bet_plan = bet_plan
         self.bet_rule_key = bet_rule_key
+        self.session = session
         self.cancel = Event()
 
     def run(self) -> None:
         sync = None
         try:
+            if self.session is not None:
+                self.auth = self.session.ensure_valid(
+                    self.site, self.auth, "任务启动检查"
+                )
+            if self.cancel.is_set():
+                return
             sync = WorkbookSync(Path(self.workbook))
-            client = HistoryClient(self.site, self.auth)
+            client = HistoryClient(
+                self.site, self.auth, session=self.session, stage="历史补录"
+            )
             rows, pages, seen_pages = [], 0, set()
             for page in range(1, 51):
                 if self.cancel.is_set():
@@ -88,6 +101,7 @@ class HistoryWorker(QThread):
                 raise HistoryError("已到单轮 50 页上限，请缩小日期/表格范围；本轮未保存")
             if self.cancel.is_set():
                 return
+            self.auth = dict(client.auth)
             report = sync.apply(rows)
             if self.bet_plan is not None and not self.cancel.is_set():
                 try:
@@ -102,7 +116,9 @@ class HistoryWorker(QThread):
                             "pages": pages, "date": self.day,
                         })
                         return
-                    runner = AutoBetRunner(self.site, self.auth)
+                    runner = AutoBetRunner(
+                        self.site, self.auth, session=self.session
+                    )
                     if (getattr(latest_settings, "profit_limit", None) is not None
                             or getattr(latest_settings, "loss_limit", None) is not None):
                         try:

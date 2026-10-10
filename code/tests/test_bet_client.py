@@ -297,6 +297,45 @@ class ClientContractTests(unittest.TestCase):
         self.assertTrue(all(item["subGroup"] == "guessNumberB" for item in posted["bet_info"]))
         self.assertNotIn("2", {item["number"] for item in posted["bet_info"]})
 
+    def test_expired_bet_post_relogs_and_retries_that_exact_post(self):
+        odds = {f"specialCodeB_guessNumberB_{n}": 48.65 for n in range(1, 50)}
+        opener = Opener(
+            {"domain": "https://api.example.test"},
+            {"code": 200, "data": {"game_list": {"bingo": {"list": {
+                "bingoLh": {"key": "bingoLh", "id": 270048}
+            }}}}},
+            {"code": 200, "data": {"next": {
+                "nextIssue": "115055012", "open_time": 1790610600,
+                "status": 1, "game_status": 1,
+            }}},
+            {"code": 200, "data": {
+                "number": {"specialCodeB": {"subType": "guessNumberB"}},
+                "odds": odds, "user_game_status": 1,
+            }},
+            {"code": 4001, "msg": "登录状态已失效"},
+            {"code": 200, "msg": "投注成功", "data": []},
+        )
+        renewed = {"token": "NEW", "refreshToken": "NEW_REFRESH", "uuid": "NEW_UUID"}
+        session = Mock()
+        session.renew.return_value = renewed
+        auth = {"token": "OLD", "refreshToken": "OLD_REFRESH", "uuid": "OLD_UUID"}
+        with tempfile.TemporaryDirectory() as temporary:
+            client = BetClient(
+                "https://web.example.test", auth, opener,
+                session=session, stage="自动投注",
+            )
+            outcome = AutoBetRunner(
+                "https://web.example.test", auth,
+                Path(temporary) / "state.json", client,
+            ).run_once(BetPlan(1, 2, "2", "猴"), "115055011", "115055011")
+        self.assertEqual(outcome.message, "投注成功")
+        self.assertEqual(
+            opener.requests[-2].full_url, opener.requests[-1].full_url
+        )
+        self.assertEqual(opener.requests[-2].data, opener.requests[-1].data)
+        self.assertEqual(opener.requests[-1].get_header("Authorization"), "Bearer NEW")
+        session.renew.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

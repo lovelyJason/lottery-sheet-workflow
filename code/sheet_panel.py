@@ -17,7 +17,7 @@ from theme import DRAW_CONFIG_STYLE
 from ui_common import hug, set_badge, unread_mark, _notice
 
 class SheetPanel(QWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, session_manager=None) -> None:
         super().__init__(parent)
         self.setObjectName("drawConfig")
         self.setStyleSheet(DRAW_CONFIG_STYLE)
@@ -27,7 +27,7 @@ class SheetPanel(QWidget):
         outer.setSpacing(14)
         self.tabs = QTabWidget()
         self.tabs.setObjectName("configTabs")
-        self.history_panel = HistoryPanel(self)
+        self.history_panel = HistoryPanel(self, session_manager=session_manager)
         self.tabs.addTab(self.history_panel, "历史补录")
         details = QWidget()
         self.tabs.addTab(details, "表格信息与模板")

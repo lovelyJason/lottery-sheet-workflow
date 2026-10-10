@@ -83,6 +83,10 @@ def set_badge(label: QLabel, ready: bool, text: str = "") -> None:
         label.hide()
     polish(label)
     if ready:
+        # Fusion can briefly collapse a padded QLabel to the layout's bare
+        # content height after a dynamic-property repolish.  Keep the status
+        # pill tall enough for both its text and background to be visible.
+        label.setMinimumHeight(24)
         label.adjustSize()
 
 

@@ -6,8 +6,9 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtTest import QSignalSpy
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QLineEdit
 from login_dialog import LoginDialog
+from auto_login import LoginCredentials
 from settings_store import Settings
 
 
@@ -22,6 +23,9 @@ class LoginDialogTests(unittest.TestCase):
         self.payload = {"token": "test-session-placeholder", "refreshToken": "test-refresh-placeholder",
                         "uuid": "test-uuid-placeholder"}
         self.auth = self.stack.enter_context(patch("login_dialog.load", return_value=None))
+        self.credentials = self.stack.enter_context(
+            patch("login_dialog.load_credentials", return_value=LoginCredentials())
+        )
         self.stack.enter_context(patch("login_dialog.load_settings", return_value=Settings(
             "https://web.example.test", None, None, 30)))
         self.dialog = LoginDialog()
@@ -82,3 +86,56 @@ class LoginDialogTests(unittest.TestCase):
             self.dialog.import_btn.click()
             save.assert_not_called()
             self.assertEqual(changed.count(), 0)
+
+    def test_auto_relogin_credentials_are_configured_in_the_dialog(self):
+        self.assertTrue(self.dialog.auto_relogin.isChecked())
+        self.dialog.site_username.setText("site-user")
+        self.dialog.site_password.setText("site-password")
+        self.dialog.captcha_username.setText("captcha-user")
+        self.dialog.captcha_password.setText("captcha-password")
+        with patch("login_dialog.save_credentials") as save:
+            self.assertTrue(self.dialog.save_login_credentials())
+        saved = save.call_args.args[0]
+        self.assertEqual(saved.site_username, "site-user")
+        self.assertEqual(saved.site_password, "site-password")
+        self.assertEqual(saved.captcha_username, "captcha-user")
+        self.assertEqual(saved.captcha_password, "captcha-password")
+        self.assertTrue(saved.auto_relogin)
+
+    def test_saved_passwords_stay_in_fields_and_eye_toggles_visibility(self):
+        configured = LoginCredentials(
+            "site-user", "site-password", "captcha-user", "captcha-password"
+        )
+        self.credentials.return_value = configured
+        self.dialog._load_credential_fields()
+        for field, expected in (
+            (self.dialog.site_password, "site-password"),
+            (self.dialog.captcha_password, "captcha-password"),
+        ):
+            self.assertEqual(field.text(), expected)
+            self.assertEqual(field.echoMode(), QLineEdit.Password)
+            self.assertEqual(len(field.actions()), 1)
+            field.actions()[0].trigger()
+            self.assertEqual(field.echoMode(), QLineEdit.Normal)
+            self.assertEqual(field.text(), expected)
+            field.actions()[0].trigger()
+            self.assertEqual(field.echoMode(), QLineEdit.Password)
+
+    def test_open_captcha_site_uses_ttshitu_user_center(self):
+        with patch("login_dialog.QDesktopServices.openUrl", return_value=True) as opened:
+            self.dialog.open_captcha_site.click()
+        url = opened.call_args.args[0]
+        self.assertEqual(url.toString(), "http://www.ttshitu.com/user/index.html")
+
+    def test_ready_badges_keep_visible_text_height(self):
+        configured = LoginCredentials(
+            "site-user", "site-password", "captcha-user", "captcha-password"
+        )
+        self.auth.return_value = self.payload
+        self.credentials.return_value = configured
+        self.dialog.refresh()
+        self.app.processEvents()
+        self.assertEqual(self.dialog.badge.text(), "已导入")
+        self.assertEqual(self.dialog.auto_badge.text(), "自动续登已配置")
+        self.assertGreaterEqual(self.dialog.badge.height(), 24)
+        self.assertGreaterEqual(self.dialog.auto_badge.height(), 24)

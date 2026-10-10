@@ -11,14 +11,21 @@ class ProfitWorker(QThread):
     succeeded = Signal(float)
     failed = Signal(str)
 
-    def __init__(self, site: str, auth: dict, parent=None):
+    def __init__(self, site: str, auth: dict, parent=None, session=None):
         super().__init__(parent)
         self.site = site
         self.auth = dict(auth)
+        self.session = session
 
     def run(self) -> None:
         try:
-            value = BetClient(self.site, self.auth).today_profit()
+            if self.session is not None:
+                self.auth = self.session.ensure_valid(
+                    self.site, self.auth, "盈亏查询"
+                )
+            value = BetClient(
+                self.site, self.auth, session=self.session, stage="盈亏查询"
+            ).today_profit()
             self.succeeded.emit(value)
         except (OSError, ValueError) as exc:
             self.failed.emit(safe_message(

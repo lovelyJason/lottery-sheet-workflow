@@ -33,10 +33,11 @@ class HistoryPanel(QFrame):
     alert_requested = Signal(str, str)
     profit_checked = Signal(float, bool, str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, session_manager=None):
         super().__init__(parent)
         self.setObjectName("card")
         self.worker = None
+        self.session_manager = session_manager
         self.running = False
         self.last_rows = []
         self.config = load_config()
@@ -405,7 +406,8 @@ class HistoryPanel(QFrame):
         try:
             selected_rule = rule_key(settings.play_mode, settings.play2_logic)
             results_url(settings.url)
-            if not auth:
+            if not auth and not (
+                    self.session_manager and self.session_manager.can_auto_relogin()):
                 raise ValueError("请先在“登录管理”导入单账号登录态")
             if self.running and not (settings.poll_interval and settings.poll_interval <= 2_147_483):
                 raise ValueError("请在运行配置中设置 1–2147483 秒的轮询间隔")
@@ -433,7 +435,8 @@ class HistoryPanel(QFrame):
             return
         day = datetime.now().date().isoformat() if self.today.isChecked() else self.day.date().toString("yyyy-MM-dd")
         self.worker = HistoryWorker(
-            settings.url, auth, path, day, self, bet_plan, selected_rule
+            settings.url, auth or {}, path, day, self, bet_plan, selected_rule,
+            session=self.session_manager,
         )
         self.worker.progress.connect(self._progress)
         self.worker.bet_succeeded.connect(app_log.info)

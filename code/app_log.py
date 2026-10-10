@@ -141,7 +141,7 @@ def format_line(timestamp: str, level: str, message: str) -> str:
     moment = html.escape(timestamp)
     body = html.escape(message).replace("\n", "<br>")
     return (
-        '<p style="margin:0 0 7px 0; line-height:155%; white-space:pre-wrap;">'
+        '<p style="margin:0 0 4px 0; line-height:140%; white-space:pre-wrap;">'
         f'<span style="color:{color}; font-weight:700;">{label}</span>'
         f'<span style="color:#8190A5;">&nbsp;&nbsp;{moment}</span>'
         f'<span style="color:#E8EDF4;">&nbsp;&nbsp;—&nbsp;&nbsp;{body}</span>'

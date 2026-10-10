@@ -49,6 +49,9 @@ class HistoryGuiTests(unittest.TestCase):
         ):
             self.stack.enter_context(patch(target, return_value=result))
         self.stack.enter_context(patch("history_panel.save_config"))
+        self.stack.enter_context(patch(
+            "session_manager.SessionManager.ensure_valid", return_value=self.auth
+        ))
         self.play_save = self.stack.enter_context(
             patch("history_panel.save_play_selection", return_value=("play1", "logic1"))
         )

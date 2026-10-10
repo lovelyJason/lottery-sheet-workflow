@@ -18,8 +18,10 @@ from result_dialogs import HistoryDialog, LogDialog
 from profit_worker import ProfitWorker
 from settings_store import load_settings, save_profit_snapshot, site_day
 from resource_status import ResourceStatus
+from session_manager import SessionManager
 from sheet_panel import SheetPanel
 from theme import APP_STYLESHEET, CONFIG_BG
+from toast import Toast
 from ui_common import enable_terminal_interrupt, hug, set_unread
 from version import APP_TITLE, APP_VERSION
 
@@ -31,6 +33,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_TITLE)
         self.setMinimumSize(760, 720)
         self.setWindowIcon(build_qicon())
+        self.session_manager = SessionManager(self)
+        self.session_manager.expired.connect(self._session_expired)
+        self.session_manager.restored.connect(self._session_restored)
+        self.session_manager.failed.connect(self._session_failed)
         canvas = QWidget()
         canvas.setObjectName("canvas")
         canvas.setAttribute(Qt.WA_StyledBackground, True)
@@ -38,7 +44,7 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(canvas)
         root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(14)
-        self.sheet_panel = SheetPanel(self)
+        self.sheet_panel = SheetPanel(self, session_manager=self.session_manager)
         self.history_panel = self.sheet_panel.history_panel
         self.alerter = SystemAlerter(self)
         self.history_panel.alert_requested.connect(self.alerter.alert)
@@ -51,13 +57,15 @@ class MainWindow(QMainWindow):
             lambda: self.refresh_profit(automatic=True)
         )
         root.addWidget(self.sheet_panel, 1)
-        self.login_dialog = LoginDialog(self)
+        self.login_dialog = LoginDialog(self, self.session_manager)
         self.login_dialog.changed.connect(self.refresh_login_badge)
+        self.login_dialog.login_idle.connect(self._close_when_idle)
         root.addWidget(self._build_entries())
         self._closing = False
         self.history_panel.idle.connect(self._close_when_idle)
         self.history_panel.state_changed.connect(self._sync_controls)
         self.setCentralWidget(canvas)
+        self.toast = Toast(self)
         self.statusBar().setSizeGripEnabled(False)
         self.statusBar().addWidget(ResourceStatus(self), 1)
         self.refresh_login_badge()
@@ -96,6 +104,24 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._position_debug_button()
+        if hasattr(self, "toast"):
+            self.toast.reposition()
+
+    def _session_expired(self, stage: str) -> None:
+        message = "登录状态已失效，正在自动续登中"
+        app_log.warn(f"{message}；等待恢复步骤：{stage}")
+        self.toast.show_message(message, "error", 5000)
+
+    def _session_restored(self, stage: str) -> None:
+        message = "登录成功" if stage == "手动登录" else f"登录成功，正在恢复{stage}"
+        app_log.info(message)
+        self.toast.show_message(message, "success", 5000)
+        self.login_dialog.refresh()
+        self.refresh_login_badge()
+
+    def _session_failed(self, reason: str) -> None:
+        app_log.error(reason)
+        self.toast.show_message(reason, "error", 5000)
 
     def open_debug_dialog(self) -> None:
         DebugDialog(self.alerter, self).exec()
@@ -149,7 +175,13 @@ class MainWindow(QMainWindow):
             dialog.deleteLater()
 
     def closeEvent(self, event) -> None:
-        if self.history_panel.busy or (self.profit_worker and self.profit_worker.isRunning()):
+        login_busy = (
+            self.login_dialog.login_worker is not None
+            and self.login_dialog.login_worker.isRunning()
+        )
+        if (self.history_panel.busy
+                or (self.profit_worker and self.profit_worker.isRunning())
+                or login_busy):
             self._closing = True
             self.history_panel.stop_polling()
             event.ignore()
@@ -161,15 +193,19 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _close_when_idle(self) -> None:
+        login_busy = (
+            self.login_dialog.login_worker is not None
+            and self.login_dialog.login_worker.isRunning()
+        )
         if self._closing and not self.history_panel.busy and not (
-                self.profit_worker and self.profit_worker.isRunning()):
+                self.profit_worker and self.profit_worker.isRunning()) and not login_busy:
             self.close()
 
     def refresh_profit(self, _checked: bool = False, automatic: bool = False) -> None:
         if self.profit_worker is not None:
             return
         settings, auth = load_settings(), load()
-        if not auth:
+        if not auth and not self.session_manager.can_auto_relogin():
             self._profit_failed("请先在“登录管理”导入单账号登录态")
             return
         if not settings.url:
@@ -179,7 +215,9 @@ class MainWindow(QMainWindow):
         self.profit_refresh.setEnabled(False)
         self._profit_automatic = automatic
         self._profit_was_halted = settings.profit_halt_date == site_day()
-        self.profit_worker = ProfitWorker(settings.url, auth, self)
+        self.profit_worker = ProfitWorker(
+            settings.url, auth or {}, self, session=self.session_manager
+        )
         self.profit_worker.succeeded.connect(self._profit_succeeded)
         self.profit_worker.failed.connect(self._profit_failed)
         self.profit_worker.finished.connect(self._profit_finished)
@@ -228,7 +266,10 @@ class MainWindow(QMainWindow):
             self._close_when_idle()
 
     def refresh_login_badge(self) -> None:
-        set_unread(self.login_btn, load() is None)
+        set_unread(
+            self.login_btn,
+            load() is None and not self.session_manager.can_auto_relogin(),
+        )
 
     def refresh_bet_badge(self) -> None:
         settings = load_settings()

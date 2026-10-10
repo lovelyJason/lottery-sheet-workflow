@@ -32,6 +32,7 @@ class AppLogTests(unittest.TestCase):
             )
             rendered = app_log.document_html()
             self.assertLess(rendered.index("INFO"), rendered.index("2026-09-29 21:08:07"))
+            self.assertIn("margin:0 0 4px 0; line-height:140%", rendered)
 
     def test_saved_log_can_be_loaded_after_restart(self):
         with tempfile.TemporaryDirectory() as temporary:

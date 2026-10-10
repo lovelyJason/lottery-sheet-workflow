@@ -313,7 +313,8 @@ class HistoryDialog(QDialog):
             self.empty.show()
             self._has_more = False
             return
-        if not auth:
+        session = getattr(self.parent(), "session_manager", None)
+        if not auth and not (session and session.can_auto_relogin()):
             self.empty.setText("请先导入登录态。")
             self.empty.show()
             self._has_more = False
@@ -325,7 +326,10 @@ class HistoryDialog(QDialog):
         else:
             self._rebuild()
             self._more_timer.start()
-        worker = ResultFetchWorker(settings.url, auth, date.today().isoformat(), page)
+        worker = ResultFetchWorker(
+            settings.url, auth or {}, date.today().isoformat(), page,
+            session=session,
+        )
         worker.succeeded.connect(self._loaded)
         worker.failed.connect(self._failed)
         worker.finished.connect(self._release_fetch)

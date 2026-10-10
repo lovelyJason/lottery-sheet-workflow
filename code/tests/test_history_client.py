@@ -67,6 +67,23 @@ class ClientTests(unittest.TestCase):
         client = HistoryClient("https://web.example.test", AUTH, Opener(DOMAIN, payload))
         self.assertEqual(client.fetch_page("2026-09-28", 1), [ROW])
 
+    def test_expired_page_is_retried_from_that_page_after_relogin(self):
+        renewed = {
+            "token": "Bearer NEW_ACCESS", "uuid": "NEW_DEVICE",
+            "refreshToken": "NEW_REFRESH",
+        }
+        session = unittest.mock.Mock()
+        session.renew.return_value = renewed
+        opener = Opener(DOMAIN, {"code": 4001, "msg": "expired"}, body())
+        client = HistoryClient(
+            "https://web.example.test", AUTH, opener, session=session,
+            stage="历史补录",
+        )
+        self.assertEqual(client.fetch_page("2026-09-28", 3), [ROW])
+        session.renew.assert_called_once()
+        self.assertEqual(opener.requests[-1].get_header("Authorization"), "Bearer NEW_ACCESS")
+        self.assertTrue(opener.requests[-1].full_url.endswith("page=3"))
+
     def test_empty_is_valid(self):
         client=HistoryClient("https://web.example.test",AUTH,Opener(DOMAIN,body([])))
         self.assertEqual(client.fetch_page("2026-09-28",1),[])

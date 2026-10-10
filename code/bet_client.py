@@ -13,6 +13,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from auth_storage import APP_DIR, _restrict
 from china_time import CHINA_TIME
 from history_client import BROWSER, SUCCESS_CODES, origin, safe_message
+from session_errors import AUTH_EXPIRED_CODES, SessionExpiredError
 
 BET_STATE_FILE = APP_DIR / "bet_state.json"
 PROFIT_NETWORK_RETRIES = 5
@@ -116,11 +117,14 @@ def selected_numbers(plan: BetPlan, open_time: int) -> list[int]:
 
 
 class BetClient:
-    def __init__(self, site: str, auth: dict, opener=None):
+    def __init__(self, site: str, auth: dict, opener=None, session=None,
+                 stage: str = "自动投注"):
         self.site = origin(site)
         self.auth = dict(auth)
         self.api = ""
         self.opener = opener or build_opener(NoRedirect())
+        self.session = session
+        self.stage = stage
 
     @property
     def secrets(self) -> tuple[str, ...]:
@@ -133,7 +137,7 @@ class BetClient:
             token = str(self.auth.get("token", "")).strip()
             uuid = str(self.auth.get("uuid", "")).strip()
             if not token or not uuid or any(c in token + uuid for c in "\r\n"):
-                raise BetError("登录态字段不完整，请重新导入")
+                raise SessionExpiredError("登录状态不存在或已失效")
             if not token.startswith("Bearer "):
                 token = "Bearer " + token
             headers.update({
@@ -154,7 +158,7 @@ class BetClient:
             body = json.loads(raw)
         except HTTPError as exc:
             if exc.code in (401, 403):
-                raise BetError("登录态失效或投注接口访问受限") from None
+                raise SessionExpiredError("登录状态已失效") from None
             raise BetError(f"投注接口 HTTP {exc.code}") from None
         except (URLError, TimeoutError, OSError):
             raise BetNetworkError("投注请求网络连接失败或超时；本期不自动重试") from None
@@ -180,13 +184,40 @@ class BetClient:
     def _api(self, path: str, method: str = "GET", payload: dict | None = None) -> dict:
         if not self.api:
             self.discover()
-        body = self._request(self.api + path, method, payload)
+        retried = False
+        while True:
+            try:
+                body = self._request(self.api + path, method, payload)
+            except SessionExpiredError:
+                if retried or self.session is None:
+                    raise
+                self.auth = self.session.renew(
+                    self.site, self.auth, self._stage_name(path)
+                )
+                retried = True
+                continue
+            if body.get("code") in AUTH_EXPIRED_CODES:
+                if retried or self.session is None:
+                    raise SessionExpiredError(
+                        safe_message(body.get("msg", "登录状态已失效"), self.secrets)
+                    )
+                self.auth = self.session.renew(
+                    self.site, self.auth, self._stage_name(path)
+                )
+                retried = True
+                continue
+            break
         if body.get("encrypt") is True:
             raise BetError("投注接口启用了加密响应")
         if body.get("code") not in SUCCESS_CODES:
             message = safe_message(body.get("msg", "请求失败"), self.secrets)
             raise BetError(message or "投注接口业务失败")
         return body
+
+    def _stage_name(self, path: str) -> str:
+        if path.endswith("/bet"):
+            return "投注提交"
+        return self.stage
 
     def game_id(self) -> int:
         body = self._api("/api/v1/member/gameList")
@@ -270,9 +301,10 @@ class BetClient:
 
 
 class AutoBetRunner:
-    def __init__(self, site: str, auth: dict, state_file: Path = BET_STATE_FILE, client=None):
+    def __init__(self, site: str, auth: dict, state_file: Path = BET_STATE_FILE,
+                 client=None, session=None):
         self.site = origin(site)
-        self.client = client or BetClient(site, auth)
+        self.client = client or BetClient(site, auth, session=session, stage="自动投注")
         self.state_file = Path(state_file)
 
     def run_once(self, plan: BetPlan, trigger_issue: str | None,
