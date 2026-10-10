@@ -116,6 +116,7 @@ class HistoryGuiTests(unittest.TestCase):
         self.assertTrue(self.panel.isVisible())
         self.assertFalse(self.window.login_dialog.isVisible())
         self.assertEqual(self.window.login_btn.text(), "登录管理")
+        self.assertEqual(self.window.open_site_btn.text(), "打开已登录网站")
         self.assertTrue(self.window.login_dialog.isAncestorOf(self.window.login_dialog.url_edit))
         self.assertGreaterEqual(self.window.width(), 760)
         self.assertGreaterEqual(self.window.height(), 720)

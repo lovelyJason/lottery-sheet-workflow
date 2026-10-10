@@ -4,9 +4,9 @@ from version import APP_TITLE, APP_VERSION
 
 
 class VersionTests(unittest.TestCase):
-    def test_version_is_single_source_for_v150_package(self):
-        self.assertEqual(APP_VERSION, "1.5.1")
-        self.assertEqual(APP_TITLE, "黄金万两 v1.5.1")
+    def test_version_is_single_source_for_v152_package(self):
+        self.assertEqual(APP_VERSION, "1.5.2")
+        self.assertEqual(APP_TITLE, "黄金万两 v1.5.2")
 
 
 if __name__ == "__main__":

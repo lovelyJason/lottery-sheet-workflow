@@ -143,6 +143,16 @@ class LoginProtocolTests(unittest.TestCase):
         with self.assertRaises(SessionExpiredError):
             client.check({"token": "TOKEN", "uuid": "DEVICE"})
 
+    def test_check_returns_current_user_information(self):
+        user_info = {"id": 123, "status": 1, "username": "member"}
+        client = LoginClient(
+            "https://web.example.test",
+            Opener(DOMAIN, {"code": 200, "data": user_info}),
+        )
+        self.assertEqual(
+            client.check({"token": "TOKEN", "uuid": "DEVICE"}), user_info
+        )
+
     def test_login_401_keeps_the_server_failure_reason(self):
         opener = Opener(
             DOMAIN,
@@ -178,6 +188,20 @@ class SessionManagerTests(unittest.TestCase):
         self.assertEqual(result, fresh)
         saved.assert_called_once_with(fresh)
         client.login.assert_called_once_with(CONFIG, "device-id")
+
+    def test_browser_session_returns_valid_auth_and_user_info(self):
+        auth = {"token": "N" * 80, "refreshToken": "R" * 80, "uuid": "device-id"}
+        user_info = {"id": 123, "status": 1}
+        client = Mock()
+        client.check.return_value = user_info
+        manager = SessionManager(login_factory=Mock(return_value=client))
+        self.assertEqual(
+            manager.prepare_browser_session(
+                "https://web.example.test", auth, "打开网站"
+            ),
+            (auth, user_info),
+        )
+        client.check.assert_called_once_with(auth)
 
     def test_renew_retries_twice_then_resumes_without_failure(self):
         fresh = {"token": "N" * 80, "refreshToken": "R" * 80, "uuid": "device-id"}

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from PySide6.QtCore import QThread, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtCore import QThread, Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
@@ -16,6 +16,7 @@ from auto_login import (
     LoginCredentials, clear_credentials, load_credentials, save_credentials,
 )
 from config_dialogs import Switch
+from external_links import open_external_url
 from session_manager import SessionManager
 from settings_store import load_settings, save_url
 from ui_common import hug, jwt_exp, mask, set_badge
@@ -241,9 +242,7 @@ class LoginDialog(QDialog):
         self.credentials_save.clicked.connect(self.save_login_credentials)
         self.open_captcha_site = hug(QPushButton("打开打码网站"))
         self.open_captcha_site.setToolTip("在默认浏览器中打开 ttshitu 用户中心")
-        self.open_captcha_site.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl(TTSHITU_USER_URL))
-        )
+        self.open_captcha_site.clicked.connect(self._open_captcha_site)
         self.login_now = hug(QPushButton("立即登录"), "primary")
         self.login_now.clicked.connect(self.start_login)
         self.credentials_clear = hug(QPushButton("清除账号配置"), "danger")
@@ -427,6 +426,20 @@ class LoginDialog(QDialog):
             self.credentials_clear, self.login_now,
         ):
             control.setEnabled(enabled)
+
+    def _open_captcha_site(self) -> None:
+        try:
+            opened = open_external_url(TTSHITU_USER_URL)
+        except (OSError, ValueError) as exc:
+            opened = False
+            reason = str(exc)
+        else:
+            reason = "系统没有可用的默认浏览器"
+        if opened:
+            self.credentials_error.hide()
+            return
+        self.credentials_error.setText("打开打码网站失败：" + reason)
+        self.credentials_error.show()
 
     def clear_login_credentials(self) -> None:
         if self.active:

@@ -36,6 +36,21 @@ class SessionManager(QObject):
         except SessionExpiredError:
             return self.renew(site, current, stage)
 
+    def prepare_browser_session(self, site: str, auth: dict | None,
+                                stage: str) -> tuple[dict, dict]:
+        current = dict(auth or {})
+        if not current:
+            current = self.renew(site, current, stage)
+        client = self._login_factory(site)
+        try:
+            user_info = client.check(current)
+        except SessionExpiredError:
+            current = self.renew(site, current, stage)
+            user_info = self._login_factory(site).check(current)
+        if not isinstance(user_info, dict) or not user_info:
+            raise AutoLoginError("网站未返回用户信息")
+        return current, user_info
+
     def renew(self, site: str, failed_auth: dict | None, stage: str) -> dict:
         failed_auth = dict(failed_auth or {})
         with self._lock:

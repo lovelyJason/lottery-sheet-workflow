@@ -24,6 +24,7 @@ from theme import APP_STYLESHEET, CONFIG_BG
 from toast import Toast
 from ui_common import enable_terminal_interrupt, hug, set_unread
 from version import APP_TITLE, APP_VERSION
+from web_session import AuthenticatedBrowserWindow, BrowserSessionWorker
 
 
 class MainWindow(QMainWindow):
@@ -51,6 +52,8 @@ class MainWindow(QMainWindow):
         self.history_panel.alert_requested.connect(self.alerter.alert)
         self.history_panel.profit_checked.connect(self._automatic_profit_succeeded)
         self.profit_worker = None
+        self.browser_session_worker = None
+        self.browser_window = None
         self._profit_automatic = False
         self._profit_was_halted = False
         self.profit_timer = QTimer(self)
@@ -145,6 +148,8 @@ class MainWindow(QMainWindow):
         self.run_btn.clicked.connect(self.open_run_dialog)
         history = hug(QPushButton("查看历史结果"))
         history.clicked.connect(self.open_history)
+        self.open_site_btn = hug(QPushButton("打开已登录网站"), "primary")
+        self.open_site_btn.clicked.connect(self.open_authenticated_site)
         logs = hug(QPushButton("查看日志"))
         logs.clicked.connect(lambda: LogDialog(self).exec())
         self.profit_label = QLabel("今日盈亏：—")
@@ -154,6 +159,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.login_btn)
         layout.addWidget(self.bet_btn)
         layout.addWidget(self.run_btn)
+        layout.addWidget(self.open_site_btn)
         layout.addWidget(history)
         layout.addWidget(logs)
         layout.addStretch(1)
@@ -180,6 +186,56 @@ class MainWindow(QMainWindow):
         finally:
             dialog.deleteLater()
 
+    def open_authenticated_site(self) -> None:
+        if self.browser_session_worker is not None:
+            return
+        settings, auth = load_settings(), load()
+        if not settings.url:
+            self._browser_open_failed("请先在“登录管理”保存网页地址")
+            return
+        if not auth and not self.session_manager.can_auto_relogin():
+            self._browser_open_failed("请先在“登录管理”完成登录配置")
+            return
+        self.open_site_btn.setEnabled(False)
+        self.open_site_btn.setText("正在打开…")
+        worker = BrowserSessionWorker(
+            settings.url, auth or {}, self.session_manager, self
+        )
+        self.browser_session_worker = worker
+        worker.succeeded.connect(self._browser_open_ready)
+        worker.failed.connect(self._browser_open_failed)
+        worker.finished.connect(self._browser_open_finished)
+        worker.start()
+
+    def _browser_open_ready(self, session: dict) -> None:
+        try:
+            window = AuthenticatedBrowserWindow(
+                session["url"], session["storage"], self
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._browser_open_failed(str(exc))
+            return
+        self.browser_window = window
+        window.destroyed.connect(lambda: setattr(self, "browser_window", None))
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        app_log.info("已在内置浏览器中打开网站并写入当前登录态")
+
+    def _browser_open_failed(self, reason: str) -> None:
+        message = "打开网站失败：" + reason
+        app_log.error(message)
+        self.toast.show_message(message, "error", 5000)
+
+    def _browser_open_finished(self) -> None:
+        worker, self.browser_session_worker = self.browser_session_worker, None
+        if worker is not None:
+            worker.deleteLater()
+        self.open_site_btn.setText("打开已登录网站")
+        self.open_site_btn.setEnabled(True)
+        if self._closing:
+            self._close_when_idle()
+
     def closeEvent(self, event) -> None:
         login_busy = (
             self.login_dialog.login_worker is not None
@@ -187,6 +243,8 @@ class MainWindow(QMainWindow):
         )
         if (self.history_panel.busy
                 or (self.profit_worker and self.profit_worker.isRunning())
+                or (self.browser_session_worker
+                    and self.browser_session_worker.isRunning())
                 or login_busy):
             self._closing = True
             self.history_panel.stop_polling()
@@ -196,6 +254,8 @@ class MainWindow(QMainWindow):
         self.history_panel.timer.stop()
         self.profit_timer.stop()
         self.login_dialog.reject()
+        if self.browser_window is not None:
+            self.browser_window.close()
         super().closeEvent(event)
 
     def _close_when_idle(self) -> None:
@@ -204,7 +264,9 @@ class MainWindow(QMainWindow):
             and self.login_dialog.login_worker.isRunning()
         )
         if self._closing and not self.history_panel.busy and not (
-                self.profit_worker and self.profit_worker.isRunning()) and not login_busy:
+                self.profit_worker and self.profit_worker.isRunning()) and not (
+                self.browser_session_worker
+                and self.browser_session_worker.isRunning()) and not login_busy:
             self.close()
 
     def refresh_profit(self, _checked: bool = False, automatic: bool = False) -> None:

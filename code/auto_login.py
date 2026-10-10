@@ -170,7 +170,7 @@ class LoginClient:
         self.api = candidate
         return candidate
 
-    def check(self, auth: dict) -> None:
+    def check(self, auth: dict) -> dict:
         if not self.api:
             self.discover()
         body = self._request(
@@ -178,6 +178,10 @@ class LoginClient:
             authenticated=True,
         )
         self._require_success(body, "登录状态检查失败", auth_check=True)
+        data = body.get("data")
+        if not isinstance(data, dict) or not data:
+            raise AutoLoginError("登录状态检查未返回用户信息")
+        return data
 
     def login(self, credentials: LoginCredentials, device_uuid: str = "") -> dict:
         if not credentials.ready:

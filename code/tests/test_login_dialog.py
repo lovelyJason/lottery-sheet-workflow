@@ -137,11 +137,16 @@ class LoginDialogTests(unittest.TestCase):
             field.actions()[0].trigger()
             self.assertEqual(field.echoMode(), QLineEdit.Password)
 
-    def test_open_captcha_site_uses_ttshitu_user_center(self):
-        with patch("login_dialog.QDesktopServices.openUrl", return_value=True) as opened:
+    def test_open_captcha_site_uses_reliable_external_link_opener(self):
+        with patch("login_dialog.open_external_url", return_value=True) as opened:
             self.dialog.open_captcha_site.click()
-        url = opened.call_args.args[0]
-        self.assertEqual(url.toString(), "http://www.ttshitu.com/user/index.html")
+        opened.assert_called_once_with("http://www.ttshitu.com/user/index.html")
+
+    def test_open_captcha_site_shows_a_visible_error(self):
+        with patch("login_dialog.open_external_url", return_value=False):
+            self.dialog.open_captcha_site.click()
+        self.assertFalse(self.dialog.credentials_error.isHidden())
+        self.assertIn("打开打码网站失败", self.dialog.credentials_error.text())
 
     def test_ready_badges_keep_visible_text_height(self):
         configured = LoginCredentials(
