@@ -41,6 +41,36 @@ class CredentialTests(unittest.TestCase):
             if os.name != "nt":
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
+    def test_old_credentials_default_to_ten_login_retries(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "credentials.json"
+            path.write_text(json.dumps({
+                "site_username": "site-user",
+                "site_password": "site-password",
+                "captcha_username": "captcha-user",
+                "captcha_password": "captcha-password",
+                "auto_relogin": True,
+            }), encoding="utf-8")
+            self.assertEqual(load_credentials(path).login_retry_count, 10)
+
+    def test_login_retry_count_is_saved_and_validated(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "credentials.json"
+            configured = LoginCredentials(
+                "site-user", "site-password", "captcha-user",
+                "captcha-password", True, 6,
+            )
+            save_credentials(configured, path)
+            self.assertEqual(load_credentials(path).login_retry_count, 6)
+            for invalid in (0, 101, True):
+                with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                    AutoLoginError, "重试次数"
+                ):
+                    save_credentials(LoginCredentials(
+                        "site-user", "site-password", "captcha-user",
+                        "captcha-password", True, invalid,
+                    ), path)
+
     def test_all_four_credentials_are_required(self):
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(AutoLoginError, "打码平台密码"):
@@ -148,6 +178,66 @@ class SessionManagerTests(unittest.TestCase):
         self.assertEqual(result, fresh)
         saved.assert_called_once_with(fresh)
         client.login.assert_called_once_with(CONFIG, "device-id")
+
+    def test_renew_retries_twice_then_resumes_without_failure(self):
+        fresh = {"token": "N" * 80, "refreshToken": "R" * 80, "uuid": "device-id"}
+        config = LoginCredentials(
+            "site-user", "site-password", "captcha-user", "captcha-password",
+            True, 10,
+        )
+        client = Mock()
+        client.login.side_effect = [
+            AutoLoginError("登录失败：验证码错误"),
+            AutoLoginError("登录失败：验证码错误"),
+            fresh,
+        ]
+        manager = SessionManager(login_factory=Mock(return_value=client))
+        retries, failures, restored = [], [], []
+        manager.retrying.connect(lambda *args: retries.append(args))
+        manager.failed.connect(failures.append)
+        manager.restored.connect(restored.append)
+        with patch("session_manager.load_credentials", return_value=config), \
+                patch("session_manager.load", return_value=None), \
+                patch("session_manager.save") as saved, \
+                patch("session_manager.sleep") as delay:
+            result = manager.renew(
+                "https://web.example.test", {"token": "OLD", "uuid": "device-id"},
+                "自动投注",
+            )
+        self.assertEqual(result, fresh)
+        self.assertEqual(client.login.call_count, 3)
+        self.assertEqual(retries, [
+            ("登录失败：验证码错误", 1, 10),
+            ("登录失败：验证码错误", 2, 10),
+        ])
+        self.assertEqual(failures, [])
+        self.assertEqual(restored, ["自动投注"])
+        self.assertEqual(delay.call_count, 2)
+        saved.assert_called_once_with(fresh)
+
+    def test_renew_stops_only_after_retry_limit_is_exhausted(self):
+        config = LoginCredentials(
+            "site-user", "site-password", "captcha-user", "captcha-password",
+            True, 2,
+        )
+        client = Mock()
+        client.login.side_effect = AutoLoginError("登录失败：验证码错误")
+        manager = SessionManager(login_factory=Mock(return_value=client))
+        retries, failures = [], []
+        manager.retrying.connect(lambda *args: retries.append(args))
+        manager.failed.connect(failures.append)
+        with patch("session_manager.load_credentials", return_value=config), \
+                patch("session_manager.load", return_value=None), \
+                patch("session_manager.sleep"), \
+                self.assertRaisesRegex(AutoLoginError, "已达到最大重试次数 2"):
+            manager.renew(
+                "https://web.example.test", {"token": "OLD", "uuid": "device-id"},
+                "历史补录",
+            )
+        self.assertEqual(client.login.call_count, 3)
+        self.assertEqual([item[1] for item in retries], [1, 2])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("验证码错误", failures[0])
 
 
 if __name__ == "__main__":

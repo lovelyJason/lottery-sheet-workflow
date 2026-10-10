@@ -7,7 +7,7 @@ from PySide6.QtCore import QThread, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QSizePolicy, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from account_dialogs import ImportDialog, GuideDialog
@@ -77,7 +77,7 @@ class LoginDialog(QDialog):
             self.import_btn, self.url_edit, self.url_save,
             self.site_username, self.site_password,
             self.captcha_username, self.captcha_password,
-            self.auto_relogin, self.credentials_save,
+            self.auto_relogin, self.login_retry_count, self.credentials_save,
             self.credentials_clear, self.login_now,
         ):
             control.setEnabled(enabled)
@@ -209,11 +209,22 @@ class LoginDialog(QDialog):
         self.auto_relogin.setToolTip("默认开启；登录失效后自动打码、登录并恢复中断步骤")
         auto_row.addWidget(auto_label)
         auto_row.addWidget(self.auto_relogin)
+        auto_row.addSpacing(22)
+        retry_label = QLabel("登录失败重试次数")
+        retry_label.setObjectName("autoLoginTitle")
+        self.login_retry_count = QSpinBox()
+        self.login_retry_count.setRange(1, 100)
+        self.login_retry_count.setValue(10)
+        self.login_retry_count.setSuffix(" 次")
+        self.login_retry_count.setToolTip("首次登录失败后的最大重试次数")
+        auto_row.addWidget(retry_label)
+        auto_row.addWidget(self.login_retry_count)
         auto_row.addStretch(1)
         layout.addLayout(auto_row)
         auto_note = QLabel(
             "默认开启。启动任务及运行过程中若登录失效，程序会自动识别验证码、"
             "重新登录，并从失败的补录、查询或投注步骤继续。"
+            "单次失败会按配置继续重试，耗尽次数后才停止任务。"
         )
         auto_note.setObjectName("hint")
         auto_note.setWordWrap(True)
@@ -305,6 +316,7 @@ class LoginDialog(QDialog):
         self.site_password.setText(config.site_password)
         self.captcha_password.setText(config.captcha_password)
         self.auto_relogin.setChecked(config.auto_relogin)
+        self.login_retry_count.setValue(config.login_retry_count)
 
     def _show_payload(self, payload: dict[str, Any] | None) -> None:
         ready = payload is not None
@@ -353,6 +365,7 @@ class LoginDialog(QDialog):
             captcha_username=self.captcha_username.text().strip(),
             captcha_password=self.captcha_password.text(),
             auto_relogin=self.auto_relogin.isChecked(),
+            login_retry_count=self.login_retry_count.value(),
         )
         try:
             save_credentials(config)
@@ -410,7 +423,7 @@ class LoginDialog(QDialog):
         for control in (
             self.site_username, self.site_password,
             self.captcha_username, self.captcha_password,
-            self.auto_relogin, self.credentials_save,
+            self.auto_relogin, self.login_retry_count, self.credentials_save,
             self.credentials_clear, self.login_now,
         ):
             control.setEnabled(enabled)

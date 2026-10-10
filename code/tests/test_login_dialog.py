@@ -89,10 +89,12 @@ class LoginDialogTests(unittest.TestCase):
 
     def test_auto_relogin_credentials_are_configured_in_the_dialog(self):
         self.assertTrue(self.dialog.auto_relogin.isChecked())
+        self.assertEqual(self.dialog.login_retry_count.value(), 10)
         self.dialog.site_username.setText("site-user")
         self.dialog.site_password.setText("site-password")
         self.dialog.captcha_username.setText("captcha-user")
         self.dialog.captcha_password.setText("captcha-password")
+        self.dialog.login_retry_count.setValue(7)
         with patch("login_dialog.save_credentials") as save:
             self.assertTrue(self.dialog.save_login_credentials())
         saved = save.call_args.args[0]
@@ -101,6 +103,20 @@ class LoginDialogTests(unittest.TestCase):
         self.assertEqual(saved.captcha_username, "captcha-user")
         self.assertEqual(saved.captcha_password, "captcha-password")
         self.assertTrue(saved.auto_relogin)
+        self.assertEqual(saved.login_retry_count, 7)
+
+    def test_retry_count_loads_and_is_locked_while_polling(self):
+        configured = LoginCredentials(
+            "site-user", "site-password", "captcha-user", "captcha-password",
+            True, 4,
+        )
+        self.credentials.return_value = configured
+        self.dialog._load_credential_fields()
+        self.assertEqual(self.dialog.login_retry_count.value(), 4)
+        self.dialog.set_active(True)
+        self.assertFalse(self.dialog.login_retry_count.isEnabled())
+        self.dialog.set_active(False)
+        self.assertTrue(self.dialog.login_retry_count.isEnabled())
 
     def test_saved_passwords_stay_in_fields_and_eye_toggles_visibility(self):
         configured = LoginCredentials(

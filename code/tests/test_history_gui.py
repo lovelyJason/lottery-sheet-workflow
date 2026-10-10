@@ -57,6 +57,7 @@ class HistoryGuiTests(unittest.TestCase):
         )
         self.stack.enter_context(patch("app_log.info"))
         self.stack.enter_context(patch("app_log.error"))
+        self.log_warn = self.stack.enter_context(patch("app_log.warn"))
         panel_sync = Mock()
         panel_sync.template_kind = "play_one"
         self.panel_sync = panel_sync
@@ -151,6 +152,13 @@ class HistoryGuiTests(unittest.TestCase):
         self.window.login_btn.click()
         self.assertEqual(observed, [True])
         self.assertTrue(self.panel.isVisible())
+
+    def test_login_retry_signal_writes_progress_to_log_console(self):
+        self.window.session_manager.retrying.emit("登录失败：验证码错误", 1, 10)
+        self.app.processEvents()
+        self.log_warn.assert_called_with(
+            "登录失败：验证码错误，正在重试第1次（最多10次）"
+        )
 
     def test_close_login_keeps_polling_and_stop_is_on_home(self):
         dialog = self.window.login_dialog

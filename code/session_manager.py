@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from threading import RLock
+from time import sleep
 
 from PySide6.QtCore import QObject, Signal
 
@@ -14,6 +15,7 @@ class SessionManager(QObject):
     expired = Signal(str)
     restored = Signal(str)
     failed = Signal(str)
+    retrying = Signal(str, int, int)
 
     def __init__(self, parent=None, login_factory=LoginClient):
         super().__init__(parent)
@@ -52,14 +54,11 @@ class SessionManager(QObject):
                 self.failed.emit(reason)
                 raise AutoLoginError(reason)
             self.expired.emit(stage)
-            try:
-                old_uuid = str((latest or failed_auth).get("uuid", ""))
-                auth = self._login_factory(site).login(config, old_uuid)
-                save(auth)
-            except (OSError, ValueError) as exc:
-                reason = "自动续登失败：" + str(exc)
-                self.failed.emit(reason)
-                raise AutoLoginError(reason) from exc
+            old_uuid = str((latest or failed_auth).get("uuid", ""))
+            auth = self._login_with_retries(
+                site, config, old_uuid, final_prefix="自动续登失败"
+            )
+            save(auth)
             self.restored.emit(stage)
             return auth
 
@@ -71,18 +70,34 @@ class SessionManager(QObject):
                 reason = "自动续登配置不完整，请先保存账号密码"
                 self.failed.emit(reason)
                 raise AutoLoginError(reason)
-            try:
-                current = load() or {}
-                auth = self._login_factory(site).login(
-                    config, str(current.get("uuid", ""))
-                )
-                save(auth)
-            except (OSError, ValueError) as exc:
-                reason = str(exc)
-                if not reason.startswith("登录失败："):
-                    reason = "登录失败：" + reason
-                self.failed.emit(reason)
-                raise AutoLoginError(reason) from exc
+            current = load() or {}
+            auth = self._login_with_retries(
+                site, config, str(current.get("uuid", "")),
+                final_prefix="登录失败",
+            )
+            save(auth)
             self.restored.emit("手动登录")
             return auth
+
+    def _login_with_retries(self, site: str, config, device_uuid: str,
+                            final_prefix: str) -> dict:
+        """Try once, then retry the configured number of times."""
+        client = self._login_factory(site)
+        maximum = config.login_retry_count
+        for attempt in range(maximum + 1):
+            try:
+                return client.login(config, device_uuid)
+            except (OSError, ValueError) as exc:
+                reason = str(exc).strip() or "未知错误"
+                if attempt >= maximum:
+                    final = (
+                        f"{final_prefix}，已达到最大重试次数 "
+                        f"{maximum}：{reason}"
+                    )
+                    self.failed.emit(final)
+                    raise AutoLoginError(final) from exc
+                retry_index = attempt + 1
+                self.retrying.emit(reason, retry_index, maximum)
+                sleep(1)
+        raise AssertionError("不可达的登录重试状态")
 

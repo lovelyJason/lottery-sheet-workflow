@@ -141,7 +141,7 @@ QPushButton:disabled {{
     color: #B0A89C;
     border: 1px solid {LINE};
 }}
-QLineEdit, QPlainTextEdit {{
+QLineEdit, QPlainTextEdit, QSpinBox {{
     background: {WHITE};
     color: {INK};
     border: 1px solid {LINE};
@@ -154,7 +154,7 @@ QPlainTextEdit {{
     font-family: Menlo, monospace;
     font-size: 12px;
 }}
-QLineEdit:focus, QPlainTextEdit:focus {{
+QLineEdit:focus, QPlainTextEdit:focus, QSpinBox:focus {{
     border: 2px solid {BLUE};
 }}
 QFrame#pointsFrame {{

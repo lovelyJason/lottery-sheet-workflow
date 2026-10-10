@@ -17,6 +17,8 @@ from session_errors import AUTH_EXPIRED_CODES, SessionExpiredError
 CREDENTIALS_FILE = APP_DIR / "login_credentials.json"
 TTSHITU_ENDPOINT = "https://api.ttshitu.com/predict"
 MAX_RESPONSE_BYTES = 2_000_000
+DEFAULT_LOGIN_RETRY_COUNT = 10
+MAX_LOGIN_RETRY_COUNT = 100
 
 
 class AutoLoginError(ValueError):
@@ -30,6 +32,7 @@ class LoginCredentials:
     captcha_username: str = ""
     captcha_password: str = ""
     auto_relogin: bool = True
+    login_retry_count: int = DEFAULT_LOGIN_RETRY_COUNT
 
     @property
     def ready(self) -> bool:
@@ -52,6 +55,7 @@ def load_credentials(path: Path = CREDENTIALS_FILE) -> LoginCredentials:
         captcha_username=_text(raw.get("captcha_username")),
         captcha_password=_text(raw.get("captcha_password")),
         auto_relogin=raw.get("auto_relogin") is not False,
+        login_retry_count=_loaded_retry_count(raw.get("login_retry_count")),
     )
 
 
@@ -65,6 +69,7 @@ def save_credentials(credentials: LoginCredentials,
         raise AutoLoginError("请填写打码平台账号")
     if not credentials.captcha_password:
         raise AutoLoginError("请填写打码平台密码")
+    _validate_retry_count(credentials.login_retry_count)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temp = path.with_suffix(".tmp")
     temp.write_text(
@@ -80,6 +85,23 @@ def clear_credentials(path: Path = CREDENTIALS_FILE) -> None:
         path.unlink()
     except FileNotFoundError:
         pass
+
+
+def _loaded_retry_count(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return DEFAULT_LOGIN_RETRY_COUNT
+    if not 1 <= value <= MAX_LOGIN_RETRY_COUNT:
+        return DEFAULT_LOGIN_RETRY_COUNT
+    return value
+
+
+def _validate_retry_count(value) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise AutoLoginError("登录失败重试次数必须是整数")
+    if not 1 <= value <= MAX_LOGIN_RETRY_COUNT:
+        raise AutoLoginError(
+            f"登录失败重试次数必须在 1-{MAX_LOGIN_RETRY_COUNT} 之间"
+        )
 
 
 class TtshituSolver:

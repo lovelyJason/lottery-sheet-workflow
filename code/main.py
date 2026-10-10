@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         self.session_manager.expired.connect(self._session_expired)
         self.session_manager.restored.connect(self._session_restored)
         self.session_manager.failed.connect(self._session_failed)
+        self.session_manager.retrying.connect(self._session_retrying)
         canvas = QWidget()
         canvas.setObjectName("canvas")
         canvas.setAttribute(Qt.WA_StyledBackground, True)
@@ -122,6 +123,11 @@ class MainWindow(QMainWindow):
     def _session_failed(self, reason: str) -> None:
         app_log.error(reason)
         self.toast.show_message(reason, "error", 5000)
+
+    def _session_retrying(self, reason: str, retry_index: int, maximum: int) -> None:
+        app_log.warn(
+            f"{reason}，正在重试第{retry_index}次（最多{maximum}次）"
+        )
 
     def open_debug_dialog(self) -> None:
         DebugDialog(self.alerter, self).exec()
