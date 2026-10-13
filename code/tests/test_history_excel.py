@@ -146,6 +146,33 @@ class ExcelTests(unittest.TestCase):
         for code in (0,50,True):
             with self.subTest(code=code),self.assertRaises(WorkbookError):s.apply([record(115054996,code)])
 
+    def test_unpublished_result_keeps_b_blank_and_d_formula_advances(self):
+        w=Workbook();s=w.active;s.title="记录"
+        s.append(["标题"]);s.append(["期数","特码",None,"预警"])
+        s.append(["115054996",None,None,'=IF(B3="",1,1)'])
+        s.append(["115054997",None,None,'=IF(B4="","",IF(TRUE,0,D3+1))'])
+        w.save(self.path);w.close()
+        sync = self.sync(self.path)
+        report = sync.apply([
+            record(115054997, None), record(115054996, 33),
+        ])
+        self.assertEqual((report.written, report.written_issues), (
+            1, ("115054996",),
+        ))
+        w=load_workbook(self.path,data_only=False)
+        self.assertEqual(w["记录"]["B3"].value,33)
+        self.assertIsNone(w["记录"]["B4"].value)
+        self.assertIn('IF(B4="",IF(ISNUMBER(D3),D3+1,1)', w["记录"]["D4"].value)
+        w.close()
+
+    def test_only_unpublished_results_can_drive_paging_without_writing(self):
+        self.make([[115054995,None]])
+        sync = self.sync(self.path)
+        rows = [record(115054997, None), record(115054996, None)]
+        self.assertTrue(sync.needs_more(rows))
+        self.assertEqual(sync.apply(rows).written, 0)
+        self.assertEqual(self.read(self.path), [None])
+
     def test_play_two_detects_template_and_writes_six_numbers_and_special(self):
         self.make_play_two([[115056775,None,None,None,None,None,None,None,None]])
         s=self.sync(self.path)

@@ -5,6 +5,7 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from time import sleep
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -14,6 +15,10 @@ from session_errors import AUTH_EXPIRED_CODES, SessionExpiredError
 
 class HistoryError(ValueError):
     pass
+
+
+class HistoryNetworkError(HistoryError):
+    """A temporary read-request failure that a later polling cycle may recover from."""
 
 
 def origin(raw: str) -> str:
@@ -56,48 +61,81 @@ class NoRedirect(HTTPRedirectHandler):
 
 class HistoryClient:
     def __init__(self, site: str, auth: dict, opener=None, session=None,
-                 stage: str = "历史补录"):
+                 stage: str = "历史补录", retry_count: int = 0,
+                 retry_delay: float = 1.0, retrying=None, cancel=None):
+        if (isinstance(retry_count, bool) or not isinstance(retry_count, int)
+                or not 0 <= retry_count <= 100):
+            raise HistoryError("网络重试次数必须是 0–100 的整数")
         self.site = origin(site)
         self.auth = dict(auth)
         self.api = ""
         self.opener = opener or build_opener(NoRedirect())
         self.session = session
         self.stage = stage
+        self.retry_count = retry_count
+        self.retry_delay = max(0.0, float(retry_delay))
+        self.retrying = retrying
+        self.cancel = cancel
 
-    def _get(self, url: str, headers: dict | None = None) -> dict:
-        try:
-            request_headers = {
-                "Accept": "application/json",
-                "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                               "AppleWebKit/537.36 (KHTML, like Gecko) "
-                               "Chrome/151.0.0.0 Safari/537.36"),
-            }
-            request_headers.update(headers or {})
-            req = Request(url, headers=request_headers, method="GET")
-            with self.opener.open(req, timeout=12) as response:
-                data = response.read(2_000_001)
-                if len(data) > 2_000_000:
-                    raise HistoryError("响应过大，本轮已停止")
-                body = json.loads(data)
-        except HTTPError as exc:
-            if exc.code in (401, 403):
-                if not headers:
-                    raise HistoryError("网站配置入口访问受限，请检查网页地址与网络") from None
-                raise SessionExpiredError("登录状态已失效") from None
-            raise HistoryError(f"历史查询 HTTP {exc.code}，本轮未保存") from None
-        except (URLError, TimeoutError, OSError):
-            raise HistoryError("网络连接失败或超时，请检查地址与网络") from None
-        except (ValueError, UnicodeError) as exc:
-            if isinstance(exc, HistoryError):
-                raise
-            raise HistoryError("服务器未返回有效 JSON") from None
+    def _get(self, url: str, headers: dict | None = None,
+             operation: str = "历史查询") -> dict:
+        body = None
+        for attempt in range(self.retry_count + 1):
+            try:
+                request_headers = {
+                    "Accept": "application/json",
+                    "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                   "Chrome/151.0.0.0 Safari/537.36"),
+                }
+                request_headers.update(headers or {})
+                req = Request(url, headers=request_headers, method="GET")
+                with self.opener.open(req, timeout=12) as response:
+                    data = response.read(2_000_001)
+                    if len(data) > 2_000_000:
+                        raise HistoryError("响应过大，本轮已停止")
+                    body = json.loads(data)
+                break
+            except HTTPError as exc:
+                if exc.code in (401, 403):
+                    if not headers:
+                        raise HistoryError("网站配置入口访问受限，请检查网页地址与网络") from None
+                    raise SessionExpiredError("登录状态已失效") from None
+                raise HistoryError(f"历史查询 HTTP {exc.code}，本轮未保存") from None
+            except (URLError, TimeoutError, OSError):
+                if attempt >= self.retry_count:
+                    suffix = (
+                        f"，已重试{self.retry_count}次" if self.retry_count else ""
+                    )
+                    raise HistoryNetworkError(
+                        f"网络连接失败或超时{suffix}；请检查地址与网络"
+                    ) from None
+                retry_index = attempt + 1
+                message = (
+                    f"{operation}网络失败，正在重试第{retry_index}次"
+                    f"（最多{self.retry_count}次）"
+                )
+                if self.retrying is not None:
+                    self.retrying(message)
+                if self.retry_delay:
+                    if self.cancel is not None:
+                        if self.cancel.wait(self.retry_delay):
+                            raise HistoryNetworkError("查询已取消") from None
+                    else:
+                        sleep(self.retry_delay)
+            except (ValueError, UnicodeError) as exc:
+                if isinstance(exc, HistoryError):
+                    raise
+                raise HistoryError("服务器未返回有效 JSON") from None
         if not isinstance(body, dict):
             raise HistoryError("服务器响应结构不符合约定")
         return body
 
     def discover(self) -> str:
         """Current site's observed /domain.json exposes the separate API domain."""
-        domain = self._get(self.site + "/domain.json").get("domain")
+        domain = self._get(
+            self.site + "/domain.json", operation="网站配置查询"
+        ).get("domain")
         if not isinstance(domain, str):
             raise HistoryError("网站 domain.json 缺少 domain，未发送登录凭据")
         candidate = origin(domain)
@@ -118,7 +156,9 @@ class HistoryClient:
         query = urlencode({"gameKey": "bingoLh", "date": day, "page": page})
         url = self.api + "/api/v1/member/openResultList?" + query
         body = self._authenticated(
-            f"{self.stage}第 {page} 页", lambda: self._get(url, self._auth_headers())
+            f"{self.stage}第 {page} 页", lambda: self._get(
+                url, self._auth_headers(), operation=f"{self.stage}第 {page} 页"
+            )
         )
         if body.get("code") in AUTH_EXPIRED_CODES:
             if self.session is None:
@@ -130,7 +170,9 @@ class HistoryClient:
                 ))
                 raise HistoryError(f"历史查询失败：{msg}")
             body = self._retry_expired(
-                f"{self.stage}第 {page} 页", lambda: self._get(url, self._auth_headers())
+                f"{self.stage}第 {page} 页", lambda: self._get(
+                    url, self._auth_headers(), operation=f"{self.stage}第 {page} 页"
+                )
             )
         if body.get("encrypt") is True:
             raise HistoryError("当前接口启用了加密响应，本轮未写入 Excel")
@@ -152,8 +194,17 @@ class HistoryClient:
             issue, code = row.get("issue"), row.get("special_code")
             if not isinstance(issue, str) or not re.fullmatch(r"[0-9]{4,20}", issue):
                 raise HistoryError("历史结果期号格式异常")
+            if code is None or isinstance(code, str) and not code.strip():
+                row["special_code"] = None
+                continue
+            if isinstance(code, str) and re.fullmatch(r"[0-9]+", code.strip()):
+                code = int(code.strip())
+                row["special_code"] = code
             if type(code) is not int or not 1 <= code <= 49:
-                raise HistoryError("历史结果特码应为 1–49 的整数")
+                raise HistoryError(
+                    f"历史结果第 {page} 页期号 {issue} 的特码异常："
+                    "应为 1–49 的整数或留空"
+                )
         return rows
 
     def fetch_day(self, day: str, limit: int = 50, cancel=None) -> list[dict]:
@@ -192,7 +243,9 @@ class HistoryClient:
     def _fetch_pages(self, day: str, pages: list[int]) -> dict[int, list[dict]]:
         def one(page: int) -> tuple[int, list[dict]]:
             client = HistoryClient(
-                self.site, self.auth, session=self.session, stage=self.stage
+                self.site, self.auth, session=self.session, stage=self.stage,
+                retry_count=self.retry_count, retry_delay=self.retry_delay,
+                retrying=self.retrying, cancel=self.cancel,
             )
             client.api = self.api
             return page, client.fetch_page(day, page)

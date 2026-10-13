@@ -7,7 +7,9 @@ from threading import Event
 from PySide6.QtCore import QThread, Signal
 from bet_client import AutoBetRunner, BetPlan
 from bet_rules import PLAY1, evaluate_bet_rule
-from history_client import HistoryClient, HistoryError, safe_message
+from history_client import (
+    HistoryClient, HistoryError, HistoryNetworkError, safe_message,
+)
 from history_excel import WorkbookSync
 from sheet_book import NoSheetResults
 from settings_store import load_settings, save_profit_snapshot, site_day
@@ -48,6 +50,7 @@ class ResultFetchWorker(QThread):
 class HistoryWorker(QThread):
     succeeded = Signal(object)
     failed = Signal(str)
+    transient_failed = Signal(str)
     progress = Signal(str)
     bet_succeeded = Signal(str)
     bet_failed = Signal(str)
@@ -56,12 +59,13 @@ class HistoryWorker(QThread):
 
     def __init__(self, site: str, auth: dict, workbook: str, day: str,
                  parent=None, bet_plan: BetPlan | None = None,
-                 bet_rule_key: str = PLAY1, session=None):
+                 bet_rule_key: str = PLAY1, session=None, retry_count: int = 10):
         super().__init__(parent)
         self.site, self.auth, self.workbook, self.day = site, auth, workbook, day
         self.bet_plan = bet_plan
         self.bet_rule_key = bet_rule_key
         self.session = session
+        self.retry_count = retry_count
         self.cancel = Event()
 
     def run(self) -> None:
@@ -75,7 +79,9 @@ class HistoryWorker(QThread):
                 return
             sync = WorkbookSync(Path(self.workbook))
             client = HistoryClient(
-                self.site, self.auth, session=self.session, stage="历史补录"
+                self.site, self.auth, session=self.session, stage="历史补录",
+                retry_count=self.retry_count, retrying=self.progress.emit,
+                cancel=self.cancel,
             )
             rows, pages, seen_pages = [], 0, set()
             for page in range(1, 51):
@@ -197,6 +203,11 @@ class HistoryWorker(QThread):
                         )
                     )
             self.succeeded.emit({"rows": rows, "report": report, "pages": pages, "date": self.day})
+        except HistoryNetworkError as exc:
+            if not self.cancel.is_set():
+                self.transient_failed.emit(
+                    safe_message(str(exc), tuple(str(v) for v in self.auth.values()))
+                )
         except (OSError, ValueError) as exc:
             # No request/response dump: all domain errors must be secret-free.
             self.failed.emit(safe_message(str(exc), tuple(str(v) for v in self.auth.values())))

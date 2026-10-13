@@ -7,6 +7,7 @@ from openpyxl import Workbook, load_workbook
 from PySide6.QtCore import QCoreApplication
 from bet_client import BetError, BetOutcome, BetPlan
 from history_worker import HistoryWorker
+from history_client import HistoryNetworkError
 
 class WorkerTests(unittest.TestCase):
     @classmethod
@@ -59,6 +60,20 @@ class WorkerTests(unittest.TestCase):
             self.worker.run()
             client.return_value.fetch_page.assert_not_called()
         self.assertEqual(self.path.read_bytes(),before)
+
+    def test_network_exhaustion_is_transient_not_fatal(self):
+        transient, fatal = [], []
+        self.worker.transient_failed.connect(transient.append)
+        self.worker.failed.connect(fatal.append)
+        with patch("history_worker.HistoryClient") as client:
+            client.return_value.fetch_page.side_effect = HistoryNetworkError(
+                "网络连接失败或超时，已重试10次；请检查地址与网络"
+            )
+            self.worker.run()
+        self.assertEqual(len(transient), 1)
+        self.assertIn("已重试10次", transient[0])
+        self.assertFalse(fatal)
+        self.assertFalse(self.results)
 
     def test_auto_bet_result_has_its_own_log_signal(self):
         worker = HistoryWorker("https://web.example.test", {}, str(self.path), "2026-09-28",

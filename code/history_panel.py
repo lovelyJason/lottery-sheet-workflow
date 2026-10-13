@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 import app_log
 from auth_storage import load
+from auto_login import load_credentials
 from bet_client import BetPlan
 from bet_rules import rule_key
 from history_client import results_url
@@ -393,6 +394,12 @@ class HistoryPanel(QFrame):
         self.alert_requested.emit("运行异常", text)
         self._controls()
 
+    def _transient_error(self, text: str) -> None:
+        """Keep continuous polling alive after a fully retried network outage."""
+        self.note.setText("本轮失败，等待下一轮：" + text)
+        app_log.error(text)
+        self.alert_requested.emit("网络异常", text)
+
     def _start(self) -> None:
         if self.busy or self.running:
             return
@@ -437,6 +444,7 @@ class HistoryPanel(QFrame):
         self.worker = HistoryWorker(
             settings.url, auth or {}, path, day, self, bet_plan, selected_rule,
             session=self.session_manager,
+            retry_count=load_credentials().login_retry_count,
         )
         self.worker.progress.connect(self._progress)
         self.worker.bet_succeeded.connect(app_log.info)
@@ -444,6 +452,7 @@ class HistoryPanel(QFrame):
         self.worker.profit_checked.connect(self.profit_checked.emit)
         self.worker.profit_failed.connect(self._profit_failed)
         self.worker.succeeded.connect(self._success)
+        self.worker.transient_failed.connect(self._transient_error)
         self.worker.failed.connect(self._error)
         self.worker.finished.connect(self._finished)
         self._controls()

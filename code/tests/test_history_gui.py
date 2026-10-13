@@ -66,8 +66,8 @@ class HistoryGuiTests(unittest.TestCase):
         self.sync.needs_more.return_value = False
         self.sync.apply.return_value = SimpleNamespace(written=1, ambiguous=0)
         self.stack.enter_context(patch("history_worker.WorkbookSync", return_value=self.sync))
-        client = self.stack.enter_context(patch("history_worker.HistoryClient"))
-        client.return_value.fetch_page.side_effect = self._fetch
+        self.client = self.stack.enter_context(patch("history_worker.HistoryClient"))
+        self.client.return_value.fetch_page.side_effect = self._fetch
         self.window = MainWindow()
         self.panel = self.window.history_panel
         self.window.show()
@@ -261,6 +261,20 @@ class HistoryGuiTests(unittest.TestCase):
         self.assertFalse(self.panel.timer.isActive())
         self._assert_locked(False)
 
+    def test_network_failure_skips_only_current_cycle_and_keeps_polling(self):
+        from history_client import HistoryNetworkError
+        self.client.return_value.fetch_page.side_effect = HistoryNetworkError(
+            "网络连接失败或超时，已重试10次；请检查地址与网络"
+        )
+        self.panel.start.click()
+        self._until(lambda: not self.panel.busy)
+        self.assertTrue(self.panel.running)
+        self.assertTrue(self.panel.timer.isActive())
+        self.assertTrue(self.panel.stop.isEnabled())
+        self.assertIn("本轮失败，等待下一轮", self.panel.note.text())
+        self.assertNotIn("已停止", self.panel.note.text())
+        self.panel.stop_polling()
+
     def test_start_immediate_then_timer_requests_again_without_overlap(self):
         self.panel.start.click()
         self._until(self.entered.is_set)
@@ -306,6 +320,16 @@ class HistoryGuiTests(unittest.TestCase):
         self.assertIsNone(plan.zodiac)
         worker.return_value.start.assert_called_once()
         self.assertNotIn("H1", self.panel.note.text())
+        self.panel.worker = None
+        self.panel._controls()
+
+    def test_history_worker_uses_configured_network_retry_count(self):
+        credentials = SimpleNamespace(login_retry_count=7)
+        with patch("history_panel.load_credentials", return_value=credentials), \
+                patch("history_panel.HistoryWorker") as worker:
+            self.panel._launch()
+        worker.assert_called_once()
+        self.assertEqual(worker.call_args.kwargs["retry_count"], 7)
         self.panel.worker = None
         self.panel._controls()
 

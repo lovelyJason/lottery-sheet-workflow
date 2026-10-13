@@ -4,8 +4,10 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
-from urllib.error import HTTPError
-from history_client import HistoryClient, HistoryError, results_url
+from urllib.error import HTTPError, URLError
+from history_client import (
+    HistoryClient, HistoryError, HistoryNetworkError, results_url,
+)
 
 class Opener:
     def __init__(self, *values):
@@ -87,6 +89,58 @@ class ClientTests(unittest.TestCase):
     def test_empty_is_valid(self):
         client=HistoryClient("https://web.example.test",AUTH,Opener(DOMAIN,body([])))
         self.assertEqual(client.fetch_page("2026-09-28",1),[])
+
+    def test_unpublished_result_is_kept_with_blank_special_code(self):
+        rows = [
+            {"issue": "115054998", "special_code": None},
+            {"issue": "115054997", "special_code": ""},
+            {"issue": "115054996", "special_code": " 16 "},
+        ]
+        client = HistoryClient(
+            "https://web.example.test", AUTH, Opener(DOMAIN, body(rows))
+        )
+        actual = client.fetch_page("2026-09-28", 2)
+        self.assertEqual(
+            [row["special_code"] for row in actual], [None, None, 16]
+        )
+
+    def test_invalid_nonblank_result_names_page_and_issue(self):
+        for invalid in (0, 50, True, "abc"):
+            with self.subTest(invalid=invalid), self.assertRaises(HistoryError) as caught:
+                HistoryClient(
+                    "https://web.example.test", AUTH,
+                    Opener(DOMAIN, body([{
+                        "issue": "115054996", "special_code": invalid,
+                    }])),
+                ).fetch_page("2026-09-28", 7)
+            self.assertIn("第 7 页", str(caught.exception))
+            self.assertIn("115054996", str(caught.exception))
+
+    def test_network_failure_retries_read_request_then_succeeds(self):
+        messages = []
+        opener = Opener(
+            DOMAIN, URLError("offline"), TimeoutError("slow"), body()
+        )
+        client = HistoryClient(
+            "https://web.example.test", AUTH, opener,
+            retry_count=2, retry_delay=0, retrying=messages.append,
+        )
+        self.assertEqual(client.fetch_page("2026-09-28", 3), [ROW])
+        self.assertEqual(len(opener.requests), 4)
+        self.assertEqual(len(messages), 2)
+        self.assertIn("正在重试第1次（最多2次）", messages[0])
+        self.assertIn("历史补录第 3 页", messages[0])
+
+    def test_network_retry_exhaustion_has_distinct_error(self):
+        opener = Opener(DOMAIN, *(URLError("offline") for _ in range(3)))
+        client = HistoryClient(
+            "https://web.example.test", AUTH, opener,
+            retry_count=2, retry_delay=0,
+        )
+        with self.assertRaises(HistoryNetworkError) as caught:
+            client.fetch_page("2026-09-28", 1)
+        self.assertIn("已重试2次", str(caught.exception))
+        self.assertEqual(len(opener.requests), 4)
 
 def _rows(start, count):
     return [{"issue": f"{start + i:04d}", "special_code": 1} for i in range(count)]

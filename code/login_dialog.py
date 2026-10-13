@@ -211,13 +211,15 @@ class LoginDialog(QDialog):
         auto_row.addWidget(auto_label)
         auto_row.addWidget(self.auto_relogin)
         auto_row.addSpacing(22)
-        retry_label = QLabel("登录失败重试次数")
+        retry_label = QLabel("网络/登录失败重试次数")
         retry_label.setObjectName("autoLoginTitle")
         self.login_retry_count = QSpinBox()
         self.login_retry_count.setRange(1, 100)
         self.login_retry_count.setValue(10)
         self.login_retry_count.setSuffix(" 次")
-        self.login_retry_count.setToolTip("首次登录失败后的最大重试次数")
+        self.login_retry_count.setToolTip(
+            "登录或历史查询网络失败后的最大重试次数；首次请求不计入重试次数"
+        )
         auto_row.addWidget(retry_label)
         auto_row.addWidget(self.login_retry_count)
         auto_row.addStretch(1)
@@ -225,7 +227,8 @@ class LoginDialog(QDialog):
         auto_note = QLabel(
             "默认开启。启动任务及运行过程中若登录失效，程序会自动识别验证码、"
             "重新登录，并从失败的补录、查询或投注步骤继续。"
-            "单次失败会按配置继续重试，耗尽次数后才停止任务。"
+            "登录或查询网络失败会按配置继续重试；查询耗尽次数后会等待下一轮，"
+            "不会停止持续轮询。"
         )
         auto_note.setObjectName("hint")
         auto_note.setWordWrap(True)

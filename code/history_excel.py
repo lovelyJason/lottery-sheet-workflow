@@ -136,18 +136,26 @@ def _record_values(record: dict, layout: WorkbookLayout) -> tuple[int, ...]:
     return numbers + (int(normalized),)
 
 
-def _records(records: list[dict], layout: WorkbookLayout) -> tuple[dict[str, tuple[int, ...]], set[str]]:
+def _records(records: list[dict], layout: WorkbookLayout) -> tuple[
+        dict[str, tuple[int, ...]], set[str], set[str]]:
     parsed: dict[str, tuple[int, ...]] = {}
     conflicts: set[str] = set()
+    issues: set[str] = set()
     for record in records:
         issue = _issue(record.get("issue")) if isinstance(record, dict) else None
         if not issue or len(issue) <= 3:
             raise WorkbookError("开奖结果字段格式不正确：需要完整期数和特码。")
+        issues.add(issue)
+        number = record.get("special_code")
+        if number is None or isinstance(number, str) and not number.strip():
+            # The site publishes an issue before its draw is available.  Keep
+            # the issue for pagination/suffix resolution, but leave Excel blank.
+            continue
         values = _record_values(record, layout)
         if issue in parsed and parsed[issue] != values:
             conflicts.add(issue)
         parsed[issue] = values
-    return parsed, conflicts
+    return parsed, conflicts, issues
 
 
 def _detect_layout(sheet) -> WorkbookLayout:
@@ -206,12 +214,12 @@ class WorkbookSync:
                 rows[period.row] = issue
         return rows
 
-    def _targets(self, parsed: dict[str, tuple[int, ...]]) -> tuple[dict[int, str], set[int]]:
-        if not parsed:
+    def _targets(self, issues: set[str]) -> tuple[dict[int, str], set[int]]:
+        if not issues:
             return {}, set()
-        latest = max(map(int, parsed))
+        latest = max(map(int, issues))
         suffixes: dict[str, set[str]] = defaultdict(set)
-        for issue in parsed:
+        for issue in issues:
             suffixes[issue[-3:]].add(issue)
         targets: dict[int, str] = {}
         ambiguous: set[int] = set()
@@ -237,9 +245,9 @@ class WorkbookSync:
         """Fetch another page only if a pending, unambiguous period precedes this batch."""
         if not records or not self.pending_count:
             return False
-        parsed, conflicts = _records(records, self.layout)
-        targets, ambiguous = self._targets(parsed)
-        oldest = min(map(int, parsed))
+        parsed, conflicts, issues = _records(records, self.layout)
+        targets, ambiguous = self._targets(issues)
+        oldest = min(map(int, issues))
         for row in self._rows(pending_only=True):
             if row in ambiguous:
                 continue
@@ -249,8 +257,8 @@ class WorkbookSync:
         return False
 
     def apply(self, records: list[dict]) -> SyncReport:
-        parsed, conflicts = _records(records, self.layout)
-        targets, ambiguous = self._targets(parsed)
+        parsed, conflicts, issues = _records(records, self.layout)
+        targets, ambiguous = self._targets(issues)
         pending = self._rows(pending_only=True)
         formula_changes = self._upgrade_blank_d_formulas()
         changes: list[tuple[int, tuple[tuple[int, int], ...]]] = []
