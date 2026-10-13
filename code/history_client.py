@@ -52,6 +52,7 @@ BROWSER = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
 )
 SUCCESS_CODES = {200, 40000}
+UNPUBLISHED_RESULT_MARKERS = {"", "无"}
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -194,7 +195,8 @@ class HistoryClient:
             issue, code = row.get("issue"), row.get("special_code")
             if not isinstance(issue, str) or not re.fullmatch(r"[0-9]{4,20}", issue):
                 raise HistoryError("历史结果期号格式异常")
-            if code is None or isinstance(code, str) and not code.strip():
+            if (code is None or isinstance(code, str)
+                    and code.strip() in UNPUBLISHED_RESULT_MARKERS):
                 row["special_code"] = None
                 continue
             if isinstance(code, str) and re.fullmatch(r"[0-9]+", code.strip()):

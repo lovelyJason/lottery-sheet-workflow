@@ -154,7 +154,7 @@ class ExcelTests(unittest.TestCase):
         w.save(self.path);w.close()
         sync = self.sync(self.path)
         report = sync.apply([
-            record(115054997, None), record(115054996, 33),
+            record(115054997, "无"), record(115054996, 33),
         ])
         self.assertEqual((report.written, report.written_issues), (
             1, ("115054996",),

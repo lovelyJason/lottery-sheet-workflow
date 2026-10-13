@@ -94,6 +94,7 @@ class ClientTests(unittest.TestCase):
         rows = [
             {"issue": "115054998", "special_code": None},
             {"issue": "115054997", "special_code": ""},
+            {"issue": "115054995", "special_code": " 无 "},
             {"issue": "115054996", "special_code": " 16 "},
         ]
         client = HistoryClient(
@@ -101,7 +102,7 @@ class ClientTests(unittest.TestCase):
         )
         actual = client.fetch_page("2026-09-28", 2)
         self.assertEqual(
-            [row["special_code"] for row in actual], [None, None, 16]
+            [row["special_code"] for row in actual], [None, None, None, 16]
         )
 
     def test_invalid_nonblank_result_names_page_and_issue(self):

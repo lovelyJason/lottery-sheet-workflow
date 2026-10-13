@@ -38,6 +38,7 @@ class WorkbookLayout:
 PLAY_ONE = WorkbookLayout("play_one", (2,))
 PLAY_TWO = WorkbookLayout("play_two", (2, 3, 4, 5, 6, 7, 8))
 PLAY_TWO_HEADERS = ("期数", "平1", "平2", "平3", "平4", "平5", "平6", "特码")
+UNPUBLISHED_RESULT_MARKERS = {"", "无"}
 
 
 def _digest(path: Path) -> str:
@@ -147,7 +148,8 @@ def _records(records: list[dict], layout: WorkbookLayout) -> tuple[
             raise WorkbookError("开奖结果字段格式不正确：需要完整期数和特码。")
         issues.add(issue)
         number = record.get("special_code")
-        if number is None or isinstance(number, str) and not number.strip():
+        if (number is None or isinstance(number, str)
+                and number.strip() in UNPUBLISHED_RESULT_MARKERS):
             # The site publishes an issue before its draw is available.  Keep
             # the issue for pagination/suffix resolution, but leave Excel blank.
             continue
