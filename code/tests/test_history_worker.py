@@ -108,6 +108,32 @@ class WorkerTests(unittest.TestCase):
             "115054996",
         )
 
+    def test_unpublished_next_issue_does_not_hide_completed_zero_trigger(self):
+        worker = HistoryWorker(
+            "https://web.example.test", {}, str(self.path), "2026-09-28",
+            bet_plan=BetPlan(1, 20, "2", "猴"),
+        )
+        with patch("history_worker.HistoryClient") as history, \
+                patch("history_worker.evaluate_bet_rule") as rule, \
+                patch("history_worker.AutoBetRunner") as runner:
+            history.return_value.fetch_page.side_effect = [[
+                {"issue": "115054997", "special_code": None},
+                {"issue": "115054996", "special_code": 33},
+            ], []]
+            rule.return_value = SimpleNamespace(
+                tail="2", zodiac="猴", trigger_issue="115054996",
+                rule_key="play1", label="玩法一", exclusion_text="2尾/猴",
+            )
+            runner.return_value.run_once.return_value = None
+
+            worker.run()
+
+        self.assertEqual(rule.call_args.args[3], "115054996")
+        self.assertEqual(
+            runner.return_value.run_once.call_args.kwargs["latest_result_issue"],
+            "115054996",
+        )
+
     def test_auto_bet_business_error_does_not_erase_excel_success(self):
         worker = HistoryWorker("https://web.example.test", {}, str(self.path), "2026-09-28",
                                bet_plan=BetPlan(1, 1, "2", "猴"))

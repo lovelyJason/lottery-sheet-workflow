@@ -150,9 +150,7 @@ class HistoryWorker(QThread):
                             })
                             return
                     try:
-                        current_issue = max(
-                            (str(row["issue"]) for row in rows), key=int, default=None
-                        )
+                        current_issue = _latest_completed_issue(rows)
                         decision = evaluate_bet_rule(
                             self.bet_rule_key,
                             Path(self.workbook),
@@ -217,3 +215,16 @@ class HistoryWorker(QThread):
             if sync is not None:
                 sync.close()
             self.auth = {}
+
+
+def _latest_completed_issue(rows: list[dict]) -> str | None:
+    """Return the newest draw, ignoring the API placeholder for the next issue."""
+    issues = (
+        str(row.get("issue", ""))
+        for row in rows
+        if isinstance(row, dict)
+        and type(row.get("special_code")) is int
+        and 1 <= row["special_code"] <= 49
+        and str(row.get("issue", "")).isdigit()
+    )
+    return max(issues, key=int, default=None)

@@ -153,7 +153,13 @@ class HistoryClient:
         if type(page) is not int or page < 1:
             raise HistoryError("分页页码必须为正整数")
         if not self.api:
-            self.discover()
+            try:
+                self.discover()
+            except HistoryNetworkError as exc:
+                self._renew_after_network_failure(
+                    f"{self.stage}第 {page} 页", exc
+                )
+                self.discover()
         query = urlencode({"gameKey": "bingoLh", "date": day, "page": page})
         url = self.api + "/api/v1/member/openResultList?" + query
         body = self._authenticated(
@@ -273,6 +279,17 @@ class HistoryClient:
             return callback()
         except SessionExpiredError:
             return self._retry_expired(stage, callback)
+        except HistoryNetworkError as exc:
+            self._renew_after_network_failure(stage, exc)
+            return callback()
+
+    def _renew_after_network_failure(self, stage: str,
+                                     error: HistoryNetworkError) -> None:
+        if self.session is None:
+            raise error
+        self.auth = self.session.renew(
+            self.site, self.auth, stage, cause="network"
+        )
 
     def _retry_expired(self, stage: str, callback):
         if self.session is None:

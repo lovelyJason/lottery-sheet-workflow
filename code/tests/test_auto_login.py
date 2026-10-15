@@ -5,10 +5,11 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+from urllib.error import URLError
 
 from auto_login import (
-    AutoLoginError, LoginClient, LoginCredentials, TtshituSolver,
-    load_credentials, save_credentials,
+    AutoLoginError, AutoLoginNetworkError, LoginClient, LoginCredentials,
+    TtshituSolver, load_credentials, save_credentials,
 )
 from session_errors import SessionExpiredError
 from session_manager import SessionManager
@@ -105,6 +106,13 @@ class CaptchaTests(unittest.TestCase):
 
 
 class LoginProtocolTests(unittest.TestCase):
+    def test_network_failure_has_a_distinct_recoverable_type(self):
+        client = LoginClient(
+            "https://web.example.test", Opener(URLError("offline"))
+        )
+        with self.assertRaises(AutoLoginNetworkError):
+            client.check({"token": "TOKEN", "uuid": "DEVICE"})
+
     def test_captcha_then_login_saves_observed_jwt_fields(self):
         token, refresh = "T" * 80, "R" * 80
         opener = Opener(
@@ -171,6 +179,30 @@ class LoginProtocolTests(unittest.TestCase):
 
 
 class SessionManagerTests(unittest.TestCase):
+    def test_network_failure_during_session_check_triggers_fresh_login(self):
+        current = {
+            "token": "O" * 80, "refreshToken": "R" * 80, "uuid": "device-id"
+        }
+        fresh = {
+            "token": "N" * 80, "refreshToken": "F" * 80, "uuid": "device-id"
+        }
+        checker = Mock()
+        checker.check.side_effect = AutoLoginNetworkError(
+            "网站登录网络连接失败或超时"
+        )
+        manager = SessionManager(login_factory=Mock(return_value=checker))
+        manager.renew = Mock(return_value=fresh)
+
+        result = manager.ensure_valid(
+            "https://web.example.test", current, "任务启动检查"
+        )
+
+        self.assertEqual(result, fresh)
+        manager.renew.assert_called_once_with(
+            "https://web.example.test", current, "任务启动检查",
+            cause="network",
+        )
+
     def test_renew_logs_in_once_and_persists_new_auth(self):
         fresh = {"token": "N" * 80, "refreshToken": "R" * 80, "uuid": "device-id"}
         client = Mock()
@@ -188,6 +220,26 @@ class SessionManagerTests(unittest.TestCase):
         self.assertEqual(result, fresh)
         saved.assert_called_once_with(fresh)
         client.login.assert_called_once_with(CONFIG, "device-id")
+
+    def test_network_recovery_has_specific_progress_signal(self):
+        fresh = {
+            "token": "N" * 80, "refreshToken": "R" * 80, "uuid": "device-id"
+        }
+        client = Mock()
+        client.login.return_value = fresh
+        manager = SessionManager(login_factory=Mock(return_value=client))
+        network, expired = [], []
+        manager.network_recovering.connect(network.append)
+        manager.expired.connect(expired.append)
+        with patch("session_manager.load_credentials", return_value=CONFIG), \
+                patch("session_manager.load", return_value=None), \
+                patch("session_manager.save"):
+            manager.renew(
+                "https://web.example.test", {"token": "OLD", "uuid": "device-id"},
+                "历史补录第 7 页", cause="network",
+            )
+        self.assertEqual(network, ["历史补录第 7 页"])
+        self.assertEqual(expired, [])
 
     def test_browser_session_returns_valid_auth_and_user_info(self):
         auth = {"token": "N" * 80, "refreshToken": "R" * 80, "uuid": "device-id"}

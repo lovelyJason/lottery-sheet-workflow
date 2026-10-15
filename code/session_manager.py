@@ -7,7 +7,9 @@ from time import sleep
 from PySide6.QtCore import QObject, Signal
 
 from auth_storage import load, save
-from auto_login import AutoLoginError, LoginClient, load_credentials
+from auto_login import (
+    AutoLoginError, AutoLoginNetworkError, LoginClient, load_credentials,
+)
 from session_errors import SessionExpiredError
 
 
@@ -16,6 +18,7 @@ class SessionManager(QObject):
     restored = Signal(str)
     failed = Signal(str)
     retrying = Signal(str, int, int)
+    network_recovering = Signal(str)
 
     def __init__(self, parent=None, login_factory=LoginClient):
         super().__init__(parent)
@@ -35,6 +38,8 @@ class SessionManager(QObject):
             return current
         except SessionExpiredError:
             return self.renew(site, current, stage)
+        except AutoLoginNetworkError:
+            return self.renew(site, current, stage, cause="network")
 
     def prepare_browser_session(self, site: str, auth: dict | None,
                                 stage: str) -> tuple[dict, dict]:
@@ -47,11 +52,15 @@ class SessionManager(QObject):
         except SessionExpiredError:
             current = self.renew(site, current, stage)
             user_info = self._login_factory(site).check(current)
+        except AutoLoginNetworkError:
+            current = self.renew(site, current, stage, cause="network")
+            user_info = self._login_factory(site).check(current)
         if not isinstance(user_info, dict) or not user_info:
             raise AutoLoginError("网站未返回用户信息")
         return current, user_info
 
-    def renew(self, site: str, failed_auth: dict | None, stage: str) -> dict:
+    def renew(self, site: str, failed_auth: dict | None, stage: str,
+              cause: str = "expired") -> dict:
         failed_auth = dict(failed_auth or {})
         with self._lock:
             latest = load()
@@ -61,14 +70,23 @@ class SessionManager(QObject):
                 return latest
             config = load_credentials()
             if not config.auto_relogin:
-                reason = "登录状态已失效，自动续登未开启"
+                reason = (
+                    "网络连接失败，自动续登未开启"
+                    if cause == "network" else "登录状态已失效，自动续登未开启"
+                )
                 self.failed.emit(reason)
                 raise AutoLoginError(reason)
             if not config.ready:
-                reason = "登录状态已失效，自动续登配置不完整"
+                reason = (
+                    "网络连接失败，自动续登配置不完整"
+                    if cause == "network" else "登录状态已失效，自动续登配置不完整"
+                )
                 self.failed.emit(reason)
                 raise AutoLoginError(reason)
-            self.expired.emit(stage)
+            if cause == "network":
+                self.network_recovering.emit(stage)
+            else:
+                self.expired.emit(stage)
             old_uuid = str((latest or failed_auth).get("uuid", ""))
             auth = self._login_with_retries(
                 site, config, old_uuid, final_prefix="自动续登失败"

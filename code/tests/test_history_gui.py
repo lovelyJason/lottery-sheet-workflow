@@ -161,6 +161,13 @@ class HistoryGuiTests(unittest.TestCase):
             "登录失败：验证码错误，正在重试第1次（最多10次）"
         )
 
+    def test_network_relogin_signal_writes_recovery_step_to_log(self):
+        self.window.session_manager.network_recovering.emit("历史补录第 7 页")
+        self.app.processEvents()
+        self.log_warn.assert_called_with(
+            "网络连接失败，正在自动重登中；等待恢复步骤：历史补录第 7 页"
+        )
+
     def test_close_login_keeps_polling_and_stop_is_on_home(self):
         dialog = self.window.login_dialog
         self.panel.start.click()

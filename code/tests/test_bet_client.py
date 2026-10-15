@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 from unittest.mock import Mock, patch
+from urllib.error import URLError
 
 from bet_client import (
     AutoBetRunner, BetClient, BetError, BetNetworkError, BetPlan, issue_distance,
@@ -18,7 +19,10 @@ class Opener:
 
     def open(self, request, timeout):
         self.requests.append(request)
-        return io.BytesIO(json.dumps(next(self.values)).encode())
+        value = next(self.values)
+        if isinstance(value, Exception):
+            raise value
+        return io.BytesIO(json.dumps(value).encode())
 
 
 class SelectionTests(unittest.TestCase):
@@ -202,6 +206,59 @@ class RunnerTests(unittest.TestCase):
 
 
 class ClientContractTests(unittest.TestCase):
+    def test_network_failure_on_get_relogs_then_retries_same_step(self):
+        renewed = {
+            "token": "NEW", "refreshToken": "NEW_REFRESH", "uuid": "NEW_UUID"
+        }
+        session = Mock()
+        session.renew.return_value = renewed
+        opener = Opener(
+            URLError("offline"),
+            {"code": 200, "data": {"game_list": {"bingo": {"list": {
+                "bingoLh": {"key": "bingoLh", "id": 270048}
+            }}}}},
+        )
+        auth = {
+            "token": "OLD", "refreshToken": "OLD_REFRESH", "uuid": "OLD_UUID"
+        }
+        client = BetClient(
+            "https://web.example.test", auth, opener,
+            session=session, stage="盈亏查询",
+        )
+        client.api = "https://api.example.test"
+
+        self.assertEqual(client.game_id(), 270048)
+
+        session.renew.assert_called_once_with(
+            "https://web.example.test", auth, "盈亏查询", cause="network"
+        )
+        self.assertEqual(len(opener.requests), 2)
+        self.assertEqual(opener.requests[-1].get_header("Authorization"), "Bearer NEW")
+
+    def test_network_failure_on_bet_post_relogs_but_never_resubmits(self):
+        renewed = {
+            "token": "NEW", "refreshToken": "NEW_REFRESH", "uuid": "NEW_UUID"
+        }
+        session = Mock()
+        session.renew.return_value = renewed
+        opener = Opener(URLError("uncertain post result"))
+        auth = {
+            "token": "OLD", "refreshToken": "OLD_REFRESH", "uuid": "OLD_UUID"
+        }
+        client = BetClient(
+            "https://web.example.test", auth, opener,
+            session=session, stage="自动投注",
+        )
+        client.api = "https://api.example.test"
+
+        with self.assertRaisesRegex(BetNetworkError, "不自动重试"):
+            client.submit({"game_id": 270048, "bet_info": []})
+
+        session.renew.assert_called_once_with(
+            "https://web.example.test", auth, "投注提交", cause="network"
+        )
+        self.assertEqual(len(opener.requests), 1)
+
     def test_today_profit_retries_network_failure_five_times_then_succeeds(self):
         client = BetClient(
             "https://web.example.test", {"token": "TOKEN", "uuid": "UUID"}

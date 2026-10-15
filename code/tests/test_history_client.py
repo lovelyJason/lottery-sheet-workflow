@@ -143,6 +143,30 @@ class ClientTests(unittest.TestCase):
         self.assertIn("已重试2次", str(caught.exception))
         self.assertEqual(len(opener.requests), 4)
 
+    def test_network_exhaustion_relogs_then_resumes_same_history_page(self):
+        renewed = {
+            "token": "Bearer NEW_ACCESS", "uuid": "NEW_DEVICE",
+            "refreshToken": "NEW_REFRESH",
+        }
+        session = unittest.mock.Mock()
+        session.renew.return_value = renewed
+        opener = Opener(URLError("offline"), body())
+        client = HistoryClient(
+            "https://web.example.test", AUTH, opener, session=session,
+            stage="历史补录", retry_count=0, retry_delay=0,
+        )
+        client.api = "https://api.example.test"
+
+        self.assertEqual(client.fetch_page("2026-09-28", 7), [ROW])
+
+        session.renew.assert_called_once_with(
+            "https://web.example.test", AUTH, "历史补录第 7 页",
+            cause="network",
+        )
+        self.assertEqual(opener.requests[-1].get_header("Authorization"),
+                         "Bearer NEW_ACCESS")
+        self.assertTrue(opener.requests[-1].full_url.endswith("page=7"))
+
 def _rows(start, count):
     return [{"issue": f"{start + i:04d}", "special_code": 1} for i in range(count)]
 

@@ -25,6 +25,10 @@ class AutoLoginError(ValueError):
     """A secret-free, user-facing automatic-login error."""
 
 
+class AutoLoginNetworkError(AutoLoginError):
+    """A transient network failure while checking or refreshing a login."""
+
+
 @dataclass(frozen=True)
 class LoginCredentials:
     site_username: str = ""
@@ -285,7 +289,7 @@ def _open_json(opener, request: Request, timeout: int, label: str) -> dict:
     except HTTPError:
         raise
     except (URLError, TimeoutError, OSError) as exc:
-        raise AutoLoginError(label + "网络连接失败或超时") from exc
+        raise AutoLoginNetworkError(label + "网络连接失败或超时") from exc
     if len(raw) > MAX_RESPONSE_BYTES:
         raise AutoLoginError(label + "响应过大")
     try:

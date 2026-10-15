@@ -39,6 +39,9 @@ class MainWindow(QMainWindow):
         self.session_manager.restored.connect(self._session_restored)
         self.session_manager.failed.connect(self._session_failed)
         self.session_manager.retrying.connect(self._session_retrying)
+        self.session_manager.network_recovering.connect(
+            self._session_network_recovering
+        )
         canvas = QWidget()
         canvas.setObjectName("canvas")
         canvas.setAttribute(Qt.WA_StyledBackground, True)
@@ -113,6 +116,11 @@ class MainWindow(QMainWindow):
 
     def _session_expired(self, stage: str) -> None:
         message = "登录状态已失效，正在自动续登中"
+        app_log.warn(f"{message}；等待恢复步骤：{stage}")
+        self.toast.show_message(message, "error", 5000)
+
+    def _session_network_recovering(self, stage: str) -> None:
+        message = "网络连接失败，正在自动重登中"
         app_log.warn(f"{message}；等待恢复步骤：{stage}")
         self.toast.show_message(message, "error", 5000)
 

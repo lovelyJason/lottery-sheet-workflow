@@ -182,8 +182,19 @@ class BetClient:
         return candidate
 
     def _api(self, path: str, method: str = "GET", payload: dict | None = None) -> dict:
+        stage = self._stage_name(path)
+        network_recovered = False
         if not self.api:
-            self.discover()
+            try:
+                self.discover()
+            except BetNetworkError:
+                if self.session is None:
+                    raise
+                self.auth = self.session.renew(
+                    self.site, self.auth, stage, cause="network"
+                )
+                network_recovered = True
+                self.discover()
         retried = False
         while True:
             try:
@@ -195,6 +206,19 @@ class BetClient:
                     self.site, self.auth, self._stage_name(path)
                 )
                 retried = True
+                continue
+            except BetNetworkError:
+                if network_recovered or self.session is None:
+                    raise
+                self.auth = self.session.renew(
+                    self.site, self.auth, stage, cause="network"
+                )
+                network_recovered = True
+                # GET is safe to replay.  A failed POST may already have been
+                # accepted by the server, so renew the session for the next
+                # step but never submit that order a second time.
+                if method != "GET":
+                    raise
                 continue
             if body.get("code") in AUTH_EXPIRED_CODES:
                 if retried or self.session is None:
