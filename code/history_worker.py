@@ -157,6 +157,15 @@ class HistoryWorker(QThread):
                             report.written_issues,
                             current_issue,
                         )
+                        if report.written or decision.trigger_issue is not None:
+                            trigger_text = (
+                                f"触发，预警期{decision.trigger_issue}"
+                                if decision.trigger_issue is not None else "未触发"
+                            )
+                            self.progress.emit(
+                                f"自动投注判断：{decision.label}，最新已开奖"
+                                f"{current_issue or '—'}期，{trigger_text}"
+                            )
                     except NoSheetResults:
                         # A freshly cleared daily template is expected to be
                         # empty before its first matching result is published.
@@ -178,6 +187,12 @@ class HistoryWorker(QThread):
                     outcome = runner.run_once(
                         plan, decision.trigger_issue, latest_result_issue=current_issue
                     )
+                    if outcome is None and (
+                            report.written or decision.trigger_issue is not None):
+                        self.progress.emit(
+                            "自动投注未提交："
+                            + (runner.last_skip_reason or "当前不在投注窗口")
+                        )
                     if outcome is not None:
                         numbers = "、".join(number for number, _ in outcome.bets)
                         amounts = "、".join(str(amount) for _, amount in outcome.bets)

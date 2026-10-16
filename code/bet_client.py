@@ -330,9 +330,11 @@ class AutoBetRunner:
         self.site = origin(site)
         self.client = client or BetClient(site, auth, session=session, stage="自动投注")
         self.state_file = Path(state_file)
+        self.last_skip_reason = ""
 
     def run_once(self, plan: BetPlan, trigger_issue: str | None,
                  latest_result_issue: str | None) -> BetOutcome | None:
+        self.last_skip_reason = ""
         fingerprint = _fingerprint(self.site, plan)
         state = _read_state(self.state_file)
         # The persisted issue reservation ledger is independent of one trigger
@@ -354,26 +356,37 @@ class AutoBetRunner:
             # Delayed campaigns must survive a restart before their first bet slot.
             _write_state(self.state_file, state)
         if not active:
+            self.last_skip_reason = "当前没有新预警或进行中的投注轮次"
             return None
         game_id = self.client.game_id()
         issue, open_time = self.client.next_issue(game_id)
         if latest_result_issue is None:
+            self.last_skip_reason = "还没有可确认的最新开奖结果"
             return None
         # issueData can expose the new betting issue before openResultList has
         # published the immediately preceding draw.  Betting while that gap is
         # present uses the old rule and can later overlap a restarted campaign.
         # Wait until history/Excel has caught up to exactly the previous issue.
         if issue_distance(str(latest_result_issue), issue) != 1:
+            self.last_skip_reason = (
+                f"开奖结果最新为{latest_result_issue}期，网站可投注期为{issue}期，"
+                "中间期尚未补齐"
+            )
             return None
         slot = issue_distance(str(state["trigger_issue"]), issue)
         if slot < plan.start_offset:
+            self.last_skip_reason = (
+                f"当前{issue}期仍在延后等待区间，尚未到第一个投注期"
+            )
             return None
         if slot >= plan.start_offset + plan.count:
             state["completed"] = plan.count
             _write_state(self.state_file, state)
+            self.last_skip_reason = "当前期已超过本轮连续投注区间"
             return None
         attempted = state.setdefault("attempted", [])
         if issue in attempted:
+            self.last_skip_reason = f"{issue}期已处理过，为避免重复投注已跳过"
             return None
         # Reserve before POST: a timeout/crash must not duplicate a possibly accepted order.
         attempted.append(issue)

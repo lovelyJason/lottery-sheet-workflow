@@ -143,13 +143,18 @@ class Play2Logic2Rule(_Play2Rule):
             if not rows:
                 raise NoSheetResults("表里还没有完整的玩法二开奖结果。")
             latest_issue, latest_zero = rows[0].issue, False
+            previous_row = rows[0]
             previous_prediction = _prediction_zodiac(rows[0].regular, zodiac_of)
             latest_prediction = previous_prediction
             for row in rows[1:]:
-                latest_zero = row.special_zodiac == previous_prediction
+                latest_zero = (
+                    row.sheet_row == previous_row.sheet_row + 1
+                    and row.special_zodiac == previous_prediction
+                )
                 latest_issue = row.issue
                 latest_prediction = _prediction_zodiac(row.regular, zodiac_of)
                 previous_prediction = latest_prediction
+                previous_row = row
             trigger = _trigger(latest_issue, latest_zero, written_issues, current_issue)
             return BetRuleDecision(
                 self.key, self.label, trigger, None, latest_prediction
@@ -160,6 +165,7 @@ class Play2Logic2Rule(_Play2Rule):
 
 @dataclass(frozen=True)
 class _Play2Row:
+    sheet_row: int
     issue: str
     regular: tuple[int, ...]
     special: int
@@ -168,23 +174,19 @@ class _Play2Row:
 
 def _completed_rows(worksheet, zodiac_of: dict[int, str]) -> list[_Play2Row]:
     rows: list[_Play2Row] = []
-    started = False
     for index in range(3, (worksheet.max_row or 3) + 1):
         issue = _issue_text(worksheet.cell(index, 1).value)
         values = tuple(_draw_number(worksheet.cell(index, column).value)
                        for column in range(2, 9))
         complete = issue is not None and all(value is not None for value in values)
         if not complete:
-            if started:
-                break
             continue
-        started = True
         regular = tuple(value for value in values[:6] if value is not None)
         special = values[6]
         zodiac = zodiac_of.get(special) if special is not None else None
         if zodiac is None:
             raise ValueError(f"玩法二模板缺少特码 {special} 的生肖对应关系")
-        rows.append(_Play2Row(issue, regular, special, zodiac))
+        rows.append(_Play2Row(index, issue, regular, special, zodiac))
     return rows
 
 

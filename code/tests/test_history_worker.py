@@ -113,6 +113,8 @@ class WorkerTests(unittest.TestCase):
             "https://web.example.test", {}, str(self.path), "2026-09-28",
             bet_plan=BetPlan(1, 20, "2", "猴"),
         )
+        progress = []
+        worker.progress.connect(progress.append)
         with patch("history_worker.HistoryClient") as history, \
                 patch("history_worker.evaluate_bet_rule") as rule, \
                 patch("history_worker.AutoBetRunner") as runner:
@@ -125,6 +127,7 @@ class WorkerTests(unittest.TestCase):
                 rule_key="play1", label="玩法一", exclusion_text="2尾/猴",
             )
             runner.return_value.run_once.return_value = None
+            runner.return_value.last_skip_reason = "当前期仍在延后等待区间"
 
             worker.run()
 
@@ -132,6 +135,13 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(
             runner.return_value.run_once.call_args.kwargs["latest_result_issue"],
             "115054996",
+        )
+        self.assertTrue(any(
+            "自动投注判断：玩法一，最新已开奖115054996期，触发" in item
+            for item in progress
+        ))
+        self.assertIn(
+            "自动投注未提交：当前期仍在延后等待区间", progress
         )
 
     def test_auto_bet_business_error_does_not_erase_excel_success(self):

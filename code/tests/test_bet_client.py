@@ -167,6 +167,7 @@ class RunnerTests(unittest.TestCase):
         )
 
         self.assertIsNone(outcome)
+        self.assertIn("中间期尚未补齐", runner.last_skip_reason)
         self.client.build_payload.assert_not_called()
         self.client.submit.assert_not_called()
 

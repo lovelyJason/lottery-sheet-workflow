@@ -76,6 +76,31 @@ class BetRuleAdapterTests(unittest.TestCase):
 
         self.assertIsNone(decision.trigger_issue)
 
+    def test_play2_logic1_reaches_latest_completed_row_after_a_gap(self):
+        regular = (4, 5, 6, 7, 8, 9)
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["数据"])
+        sheet.append(["期数", "平1", "平2", "平3", "平4", "平5", "平6",
+                      "特码", "生肖", "尾/肖", "杀1肖"])
+        sheet.append(["115058522", *regular, 1])
+        sheet.append(["115058523", *regular, 2])
+        sheet.append(["115058524"])  # 分批补录留下的中间空档
+        sheet.append(["115058525", *regular, 11])
+        for index, (number, zodiac) in enumerate(
+                {1: "马", 2: "蛇", 11: "马"}.items(), 3):
+            sheet.cell(index, 24).value = number
+            sheet.cell(index, 25).value = zodiac
+        workbook.save(self.path)
+        workbook.close()
+
+        decision = evaluate_bet_rule(
+            PLAY2_LOGIC1, self.path, ("115058525",), "115058525"
+        )
+
+        self.assertEqual(decision.trigger_issue, "115058525")
+        self.assertEqual(decision.exclusion_text, "2尾/蛇")
+
     def test_play2_logic2_recomputes_k_and_excludes_current_r_zodiac(self):
         # First row predicts total 30 -> 猴. The second special is also 猴,
         # therefore K reaches zero. Its own R prediction is total 37 -> 鸡,
@@ -93,6 +118,28 @@ class BetRuleAdapterTests(unittest.TestCase):
         self.assertIsNone(decision.tail)
         self.assertEqual(decision.zodiac, "鸡")
         self.assertEqual(decision.exclusion_text, "鸡")
+
+    def test_play2_logic2_does_not_bridge_a_blank_physical_row(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["数据"])
+        sheet.append(["期数", "平1", "平2", "平3", "平4", "平5", "平6",
+                      "特码", "生肖", "尾/肖", "杀1肖"])
+        sheet.append(["115058522", 1, 2, 3, 4, 5, 6, 1])
+        sheet.append(["115058523"])
+        sheet.append(["115058524", 7, 8, 9, 10, 11, 12, 3])
+        for index, (number, zodiac) in enumerate(
+                {1: "鼠", 3: "猴", 30: "猴", 37: "鸡"}.items(), 3):
+            sheet.cell(index, 24).value = number
+            sheet.cell(index, 25).value = zodiac
+        workbook.save(self.path)
+        workbook.close()
+
+        decision = evaluate_bet_rule(
+            PLAY2_LOGIC2, self.path, ("115058524",), "115058524"
+        )
+
+        self.assertIsNone(decision.trigger_issue)
 
     def test_play2_rejects_a_play1_workbook_before_betting(self):
         workbook = Workbook()
